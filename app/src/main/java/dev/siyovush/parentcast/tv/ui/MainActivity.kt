@@ -224,7 +224,11 @@ class MainActivity : Activity() {
         PlaybackStatus.PAUSED -> "Пауза; позиция сохранена"
         PlaybackStatus.STOPPED -> "Остановлено; автозапуска нет"
         PlaybackStatus.ENDED -> "Очередь завершена; автоподбора нет"
-        PlaybackStatus.ERROR -> when (snapshot.error?.kind) {
+        PlaybackStatus.ERROR -> errorStatusText(snapshot)
+    }
+
+    private fun errorStatusText(snapshot: CoordinatorSnapshot): String {
+        val summary = when (snapshot.error?.kind) {
             PlaybackErrorKind.INVALID_LINK -> getString(R.string.debug_invalid_link)
             PlaybackErrorKind.UNAVAILABLE -> "Ошибка: ролик недоступен"
             PlaybackErrorKind.UNSUPPORTED -> "Ошибка: тип ролика или поток не поддерживается"
@@ -233,6 +237,8 @@ class MainActivity : Activity() {
             PlaybackErrorKind.DECODER -> "Ошибка декодера устройства"
             PlaybackErrorKind.PLAYBACK, null -> "Ошибка воспроизведения"
         }
+        val diagnostic = snapshot.error?.diagnostic.orEmpty()
+        return if (diagnostic.isBlank()) summary else "$summary\n$diagnostic"
     }
 
     companion object {

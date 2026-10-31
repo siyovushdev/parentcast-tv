@@ -37,6 +37,8 @@ class NewPipeYouTubeSource : YouTubeSource {
             throw error
         } catch (error: YouTubeSourceException) {
             throw error
+        } catch (error: org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException) {
+            throw sourceError(PlaybackErrorKind.EXTRACTOR, error, stopRequested = true)
         } catch (error: ContentNotSupportedException) {
             throw sourceError(PlaybackErrorKind.UNSUPPORTED, error)
         } catch (error: ContentNotAvailableException) {
@@ -140,7 +142,15 @@ class NewPipeYouTubeSource : YouTubeSource {
     private fun sourceError(
         kind: PlaybackErrorKind,
         cause: Throwable? = null,
-    ) = YouTubeSourceException(PlaybackFailure(kind), cause)
+        stopRequested: Boolean = false,
+    ) = YouTubeSourceException(
+        PlaybackFailure(
+            kind = kind,
+            diagnostic = cause.safeDiagnostic(),
+            stopRequested = stopRequested,
+        ),
+        cause,
+    )
 
     companion object {
         private val initializationLock = Any()

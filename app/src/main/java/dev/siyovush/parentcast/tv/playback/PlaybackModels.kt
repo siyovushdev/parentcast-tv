@@ -16,6 +16,8 @@ enum class PlaybackErrorKind {
 data class PlaybackFailure(
     val kind: PlaybackErrorKind,
     val canRefresh: Boolean = false,
+    val diagnostic: String = "",
+    val stopRequested: Boolean = false,
 )
 
 enum class PlaybackStatus {

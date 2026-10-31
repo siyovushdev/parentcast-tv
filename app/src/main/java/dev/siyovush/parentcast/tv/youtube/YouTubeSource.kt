@@ -25,3 +25,23 @@ class YouTubeSourceException(
     val failure: PlaybackFailure,
     cause: Throwable? = null,
 ) : Exception(failure.kind.name, cause)
+
+internal fun Throwable?.safeDiagnostic(): String {
+    if (this == null) return ""
+    val urlPattern = Regex("https?://\\S+")
+    val sensitivePattern = Regex(
+        "(?i)(cookie|authorization|access_token|refresh_token|visitorData|poToken|pot|token|signature|sap|sig|expire)=[^\\s&]+",
+    )
+    return generateSequence(this) { it.cause }
+        .take(6)
+        .joinToString(" <- ") { error ->
+            val message = error.message.orEmpty()
+                .replace(urlPattern, "<URL>")
+                .replace(sensitivePattern, "$1=<redacted>")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+                .take(300)
+            if (message.isEmpty()) error.javaClass.name else "${error.javaClass.name}: $message"
+        }
+        .take(800)
+}

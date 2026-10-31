@@ -153,6 +153,32 @@ class PlaybackCoordinatorTest {
     }
 
     @Test
+    fun serviceWideBlockStopsPlaybackAndPreservesQueue() = runTest {
+        val source = FakeSource().apply {
+            handler = {
+                throw YouTubeSourceException(
+                    PlaybackFailure(PlaybackErrorKind.EXTRACTOR, stopRequested = true),
+                )
+            }
+        }
+        val player = FakePlayer()
+        val store = MemoryStore()
+        val coordinator = coordinator(source, store, player)
+        var snapshot = CoordinatorSnapshot()
+        coordinator.setListener { snapshot = it }
+        coordinator.start()
+        coordinator.add("video000001")
+        coordinator.play()
+        advanceUntilIdle()
+
+        assertEquals(PlaybackStatus.ERROR, snapshot.status)
+        assertEquals(PlaybackIntent.STOP, store.state.intent)
+        assertEquals("video000001", store.state.currentItem?.videoId)
+        assertTrue(player.prepareCalls.isEmpty())
+        coordinator.close()
+    }
+
+    @Test
     fun forbiddenMediaUrlIsRefreshedOnlyOnce() = runTest {
         val source = FakeSource()
         val player = FakePlayer()

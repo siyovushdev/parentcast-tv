@@ -250,12 +250,18 @@ class PlaybackCoordinator(
     ) {
         if (!isCurrentExtraction(generation, queueItemId)) return
         preparedItemId = null
-        status = PlaybackStatus.ERROR
-        error = if (cause is YouTubeSourceException) {
+        val failure = if (cause is YouTubeSourceException) {
             cause.failure
         } else {
             PlaybackFailure(PlaybackErrorKind.EXTRACTOR)
         }
+        if (failure.stopRequested) {
+            state = state.stop()
+            refreshAttempted = false
+            persist()
+        }
+        status = PlaybackStatus.ERROR
+        error = failure
         emit()
     }
 
