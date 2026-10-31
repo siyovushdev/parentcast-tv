@@ -57,11 +57,6 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setDecorFitsSystemWindows(false)
-        window.insetsController?.let { controller ->
-            controller.hide(WindowInsets.Type.systemBars())
-            controller.systemBarsBehavior =
-                WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        }
 
         playerRoot = layoutInflater.inflate(R.layout.activity_player, null)
         debugRoot = layoutInflater.inflate(R.layout.activity_debug, null)
@@ -90,6 +85,11 @@ class MainActivity : Activity() {
         debugRoot.findViewById<Button>(R.id.backButton).setOnClickListener { showPlayer() }
 
         setContentView(playerRoot)
+        window.insetsController?.let { controller ->
+            controller.hide(WindowInsets.Type.systemBars())
+            controller.systemBarsBehavior =
+                WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
         coordinator.setListener(::render)
         coordinator.start()
         handler.postDelayed(savePosition, SAVE_INTERVAL_MS)
