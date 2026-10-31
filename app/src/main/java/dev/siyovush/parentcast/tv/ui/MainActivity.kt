@@ -43,6 +43,8 @@ class MainActivity : Activity() {
     private lateinit var linkInput: EditText
     private lateinit var playbackPlayer: Media3PlaybackPlayer
     private lateinit var coordinator: PlaybackCoordinator
+    private lateinit var youTubeSession: dev.siyovush.parentcast.tv.youtube.YouTubeSession
+    private lateinit var sessionStatus: TextView
     private var latestSnapshot = CoordinatorSnapshot()
     private var renderedQueue: Pair<List<QueueItem>, Int>? = null
     private var debugVisible = false
@@ -67,11 +69,13 @@ class MainActivity : Activity() {
         diagnostics = debugRoot.findViewById(R.id.diagnostics)
         queueContainer = debugRoot.findViewById(R.id.queueContainer)
         linkInput = debugRoot.findViewById(R.id.linkInput)
+        sessionStatus = debugRoot.findViewById(R.id.sessionStatus)
 
+        youTubeSession = dev.siyovush.parentcast.tv.youtube.YouTubeSessionFactory.create(this)
         val playerView = playerRoot.findViewById<PlayerView>(R.id.playerView)
-        playbackPlayer = Media3PlaybackPlayer(playerView)
+        playbackPlayer = Media3PlaybackPlayer(playerView, youTubeSession)
         coordinator = PlaybackCoordinator(
-            source = NewPipeYouTubeSource(),
+            source = NewPipeYouTubeSource(youTubeSession),
             store = AtomicQueueStore(File(filesDir, "queue-state.json")),
             player = playbackPlayer,
             scope = scope,
@@ -83,6 +87,18 @@ class MainActivity : Activity() {
         debugRoot.findViewById<Button>(R.id.nextButton).setOnClickListener { coordinator.next() }
         debugRoot.findViewById<Button>(R.id.stopButton).setOnClickListener { coordinator.stop() }
         debugRoot.findViewById<Button>(R.id.backButton).setOnClickListener { showPlayer() }
+        val sessionVisibility = if (youTubeSession.isSupported) View.VISIBLE else View.GONE
+        listOf(
+            sessionStatus,
+            debugRoot.findViewById<Button>(R.id.importSessionButton),
+            debugRoot.findViewById<Button>(R.id.disableSessionButton),
+        ).forEach { it.visibility = sessionVisibility }
+        debugRoot.findViewById<Button>(R.id.importSessionButton).setOnClickListener {
+            importSession()
+        }
+        debugRoot.findViewById<Button>(R.id.disableSessionButton).setOnClickListener {
+            disableSession()
+        }
 
         setContentView(playerRoot)
         window.insetsController?.let { controller ->
@@ -140,6 +156,37 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun importSession() {
+        try {
+            val count = youTubeSession.importFromPrivateFile()
+            debugStatus.text = getString(R.string.debug_session_imported, count)
+        } catch (error: Exception) {
+            debugStatus.text = error.message ?: getString(R.string.debug_session_error)
+        }
+        renderSessionStatus()
+    }
+
+    private fun disableSession() {
+        coordinator.stop()
+        try {
+            youTubeSession.disableAndDelete()
+            debugStatus.text = getString(R.string.debug_session_deleted)
+        } catch (error: Exception) {
+            debugStatus.text = error.message ?: getString(R.string.debug_session_error)
+        }
+        renderSessionStatus()
+    }
+
+    private fun renderSessionStatus() {
+        sessionStatus.setText(
+            when {
+                youTubeSession.isEnabled -> R.string.debug_session_enabled
+                youTubeSession.hasStoredSession -> R.string.debug_session_file_ready
+                else -> R.string.debug_session_disabled
+            },
+        )
+    }
+
     private fun showDebug() {
         debugVisible = true
         setContentView(debugRoot)
@@ -168,6 +215,7 @@ class MainActivity : Activity() {
         playerStatus.text = playerMessage.orEmpty()
 
         debugStatus.text = debugStatusText(snapshot)
+        renderSessionStatus()
         storageWarning.visibility = if (snapshot.storageWarning) View.VISIBLE else View.GONE
         val current = snapshot.queueState.currentItem
         currentItem.text = if (current == null) {

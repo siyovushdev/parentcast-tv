@@ -17,10 +17,15 @@ import androidx.media3.ui.PlayerView
 import dev.siyovush.parentcast.tv.youtube.ResolvedVideo
 import dev.siyovush.parentcast.tv.youtube.StreamSpec
 import dev.siyovush.parentcast.tv.youtube.YOUTUBE_USER_AGENT
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.IOException
 
 @androidx.annotation.OptIn(UnstableApi::class)
-class Media3PlaybackPlayer(private val playerView: PlayerView) : PlaybackPlayer {
+class Media3PlaybackPlayer(
+    private val playerView: PlayerView,
+    private val session: dev.siyovush.parentcast.tv.youtube.YouTubeSession =
+        dev.siyovush.parentcast.tv.youtube.DisabledYouTubeSession,
+) : PlaybackPlayer {
     private val player = ExoPlayer.Builder(playerView.context).build()
     private var listener: PlaybackPlayer.Listener? = null
     private var activeGeneration = 0L
@@ -113,7 +118,14 @@ class Media3PlaybackPlayer(private val playerView: PlayerView) : PlaybackPlayer 
     }
 
     private fun progressiveSource(spec: StreamSpec): MediaSource {
-        val headers = spec.headers.filterKeys { !it.equals("User-Agent", ignoreCase = true) }
+        val headers = spec.headers
+            .filterKeys { !it.equals("User-Agent", ignoreCase = true) }
+            .toMutableMap()
+        val cookieHeader = dev.siyovush.parentcast.tv.youtube.CookieHeaderCodec.merge(
+            emptyList(),
+            session.cookiesFor(spec.url.toHttpUrl()),
+        )
+        if (cookieHeader != null) headers["Cookie"] = cookieHeader
         val dataSource = DefaultHttpDataSource.Factory()
             .setUserAgent(YOUTUBE_USER_AGENT)
             .setAllowCrossProtocolRedirects(true)

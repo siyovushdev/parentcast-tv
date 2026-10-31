@@ -13,7 +13,10 @@ local.properties
 keystore.properties
 secrets.properties
 cookies.txt
+*cookies*.txt
 cookies*.json
+*cookies*.json
+*.netscape
 .dev/
 artifacts/
 *.apk

@@ -13,7 +13,9 @@ import java.util.concurrent.TimeUnit
 internal const val YOUTUBE_USER_AGENT =
     "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
 
-class OkHttpDownloader : Downloader() {
+class OkHttpDownloader(
+    private val session: YouTubeSession = DisabledYouTubeSession,
+) : Downloader() {
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
@@ -42,7 +44,17 @@ class OkHttpDownloader : Downloader() {
             }
             else -> throw IOException("Unsupported extractor HTTP method")
         }
-        client.newCall(builder.build()).execute().use { response ->
+        val baseRequest = builder.build()
+        val cookieHeader = CookieHeaderCodec.merge(
+            baseRequest.headers("Cookie"),
+            session.cookiesFor(baseRequest.url),
+        )
+        val requestWithCookies = if (cookieHeader == null) {
+            baseRequest
+        } else {
+            baseRequest.newBuilder().header("Cookie", cookieHeader).build()
+        }
+        client.newCall(requestWithCookies).execute().use { response ->
             return Response(
                 response.code,
                 response.message,

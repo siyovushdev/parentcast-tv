@@ -24,4 +24,12 @@
     <string name="debug_invalid_link">Неверная или неподдерживаемая YouTube-ссылка</string>
     <string name="debug_added">Добавлено: %1$s</string>
     <string name="debug_storage_warning">Сохранённое состояние не прочитано; используется пустая очередь.</string>
+    <string name="debug_session_disabled">YouTube DEBUG session: выключена</string>
+    <string name="debug_session_file_ready">YouTube DEBUG session: файл готов, включение вручную</string>
+    <string name="debug_session_enabled">YouTube DEBUG session: включена</string>
+    <string name="debug_session_import">Включить сессию из app-private файла</string>
+    <string name="debug_session_disable">Отключить и удалить сессию</string>
+    <string name="debug_session_imported">Сессия включена: %1$d YouTube cookies</string>
+    <string name="debug_session_deleted">Авторизация отключена; файл сессии удалён</string>
+    <string name="debug_session_error">Операция с сессией не выполнена</string>
 </resources>
