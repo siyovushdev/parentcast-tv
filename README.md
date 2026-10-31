@@ -7,25 +7,47 @@
 
 ## Статус
 
-Подготовлены ТЗ v0.1, правила работы и первое задание Kimi Code.
-В этом стартовом пакете нет Android-кода или APK. Сборка и аппаратные проверки не выполнялись.
-GitHub-репозиторий этим пакетом не создан; его создание входит в стартовое задание агенту.
+Ветка `m0/player-spike` содержит Android-прототип M0: Kotlin, Media3, NewPipe Extractor,
+очередь с атомарным локальным сохранением и отдельный debug-экран. Приватный репозиторий:
+`siyovushdev/parentcast-tv`. Это не защищённый детский режим; фактические результаты проверок
+находятся в `docs/reports/M0.md`.
 
 ## Состав решения
 
 - Один Android APK на приставке: нативный плеер, очередь, локальное хранение,
   впоследствии HOME/родительский режим и встроенная родительская веб-панель.
-- Телефон и Ubuntu используют одну адаптивную веб-панель.
+- Телефон и Ubuntu используют одну адаптивную веб-панель в следующем этапе, не в M0.
 - Приставка получает видеопоток сама. Постоянно работающий Ubuntu для локального просмотра не нужен.
 - Удалённое управление — та же панель через защищённый канал; это отдельный этап.
 
-## Начать
+## Сборка M0
 
-Прочитать `AGENTS.md`, `docs/TZ-v0.1.md`, затем выполнить только `tasks/M0.md`.
-Готовый стартовый запрос находится в `KIMI_START.md`.
+Нужны JDK 17 и Android SDK с platform 35. Все версии Gradle и библиотек закреплены в проекте.
+Из корня репозитория:
 
-Предлагаемое имя приватного GitHub-репозитория: `siyovushdev/parentcast-tv`.
-Пакет Android: `dev.siyovush.parentcast.tv`, debug: `dev.siyovush.parentcast.tv.debug`.
+```bash
+export JAVA_HOME=/path/to/jdk-17
+export ANDROID_HOME=/path/to/Android/Sdk
+./gradlew testDebugUnitTest assembleDebug lintDebug --no-daemon
+```
+
+Debug APK создаётся как `app/build/outputs/apk/debug/app-debug.apk`; его applicationId —
+`dev.siyovush.parentcast.tv.debug`. Минимальный SDK — 33, целевой стенд M0 — H728 с Android 14.
+
+## Запуск на однозначно опознанной H728
+
+Не используйте эти команды для случайного телефона или неопознанного ADB-устройства.
+Установка не меняет Launcher, HOME, Device Owner или системные настройки:
+
+```bash
+adb -s <SERIAL_H728> install -r app/build/outputs/apk/debug/app-debug.apk
+adb -s <SERIAL_H728> shell am start -n dev.siyovush.parentcast.tv.debug/dev.siyovush.parentcast.tv.ui.MainActivity
+```
+
+Очередь изначально пуста. На экране просмотра Menu/Settings или удержание DPAD Center открывает
+отдельный debug-экран. Добавьте обычную, короткую или Shorts YouTube-ссылку, затем нажмите
+«Играть». Back из debug-экрана возвращает плеер. Во время видео собственные кнопки и YouTube UI
+не отображаются.
 
 ## Главные границы
 

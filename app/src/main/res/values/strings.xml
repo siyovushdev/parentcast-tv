@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ParentCast TV</string>
+    <string name="player_waiting">Очередь пуста. Видео выбирает родитель.</string>
+    <string name="player_loading">Загрузка выбранного видео…</string>
+    <string name="player_buffering">Буферизация…</string>
+    <string name="player_paused">Пауза</string>
+    <string name="player_stopped">Просмотр остановлен</string>
+    <string name="player_ended">Выбранная очередь завершена</string>
+    <string name="player_error">Видео недоступно. Подробности — на родительском debug-экране.</string>
+    <string name="debug_title">ParentCast TV — DEBUG M0</string>
+    <string name="debug_warning">Прототип для родителя. Это не защищённый детский режим.</string>
+    <string name="debug_link_hint">https://www.youtube.com/watch?v=… или https://youtu.be/…</string>
+    <string name="debug_add">Добавить в конец</string>
+    <string name="debug_play">Играть</string>
+    <string name="debug_pause">Пауза / продолжить</string>
+    <string name="debug_next">Следующий</string>
+    <string name="debug_stop">Стоп</string>
+    <string name="debug_back">Назад к просмотру</string>
+    <string name="debug_legal">Сторонние компоненты: NewPipe Extractor — GPL-3.0-or-later, гарантия не предоставляется; Media3, OkHttp и Kotlin — Apache-2.0. Полные тексты: APK assets/licenses/.</string>
+    <string name="debug_queue">Очередь</string>
+    <string name="debug_empty">Очередь пуста</string>
+    <string name="debug_delete">Удалить ожидающий %1$d: %2$s</string>
+    <string name="debug_invalid_link">Неверная или неподдерживаемая YouTube-ссылка</string>
+    <string name="debug_added">Добавлено: %1$s</string>
+    <string name="debug_storage_warning">Сохранённое состояние не прочитано; используется пустая очередь.</string>
+</resources>
