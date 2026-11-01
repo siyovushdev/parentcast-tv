@@ -73,8 +73,8 @@ SHA-256: `614bc6e73bcea902d332e9248a6bf09f68f3bfaf8bd75e3c16370da7695a9071`.
 |---|---|---|
 | M0-01 | PASS | Чистый checkout `10c0cb4`, 63 задачи, 50 тестов, APK и lint успешны |
 | M0-02 | PASS | 9 parser-тестов; посторонний hostname отклонён и на H728 |
-| M0-03 | NOT_RUN | Три VOD реально показаны, но физическое прослушивание звука владельцем не подтверждено |
-| M0-04 | NOT_RUN | Раздельные дорожки и AudioTrack подтверждены; слышимая синхронность не проверена |
+| M0-03 | NOT_RUN | Три VOD реально показаны; активный немьюченный AudioTrack на speaker подтверждён, но физическое прослушивание владельцем не зафиксировано |
+| M0-04 | NOT_RUN | Раздельные дорожки и активный AudioTrack подтверждены; слышимая синхронность не проверена |
 | M0-05 | PASS | Естественные переходы `aqz-KE-bpKQ` → `eRsGyueVLvQ` → `jNQXAC9IVRw`, строгий порядок |
 | M0-06 | PASS | `finished=true`, `intent=STOP`, собственный экран ожидания, рекомендаций нет |
 | M0-07 | PASS | NEXT и STOP во время загрузки; `currentIndex=5`, STOP, через 60 с старый ролик не запустился |
@@ -92,8 +92,12 @@ SHA-256: `614bc6e73bcea902d332e9248a6bf09f68f3bfaf8bd75e3c16370da7695a9071`.
 - `artifacts/ytdlp-sintel-codecs.png`: Sintel `1920x818 avc1.640028`, `mp4a.40.2`.
 - `artifacts/ytdlp-sintel-after-buffer.png` и `ytdlp-short-frame-or-end.png`: реальные кадры
   Sintel и короткого VOD.
-- `artifacts/ytdlp-audio-state.txt`: активный AudioTrack 48 kHz, USAGE_MEDIA, AAC; это доказательство
-  audio pipeline, но не физического прослушивания.
+- `artifacts/ytdlp-audio-state.txt` и `ytdlp-audio-recheck-current.txt`: активный AudioTrack
+  48 kHz, USAGE_MEDIA, `mutedState:none`, активное выходное устройство `type:speaker`. Это реальный
+  звуковой вывод, но не физическое прослушивание или синхронность.
+- `artifacts/ytdlp-audio-real-frame.png`: реальный кадр BBB одновременно с активным AudioTrack.
+- `artifacts/ytdlp-audio-test-stopped-session-kept.png`: видео остановлено, сессия сохранена;
+  `SESSION_FILE_PRESENT`.
 - `artifacts/ytdlp-pause-state.png`: PAUSE с `positionMs=407419` и продолжение.
 - `artifacts/ytdlp-queue-ended-sintel.png` и `ytdlp-short-ended.png`: конец очереди без рекомендаций.
 - `artifacts/ytdlp-stop-next-loading.png`: STOP после NEXT во время загрузки, без позднего запуска.
@@ -109,7 +113,8 @@ SHA-256: `614bc6e73bcea902d332e9248a6bf09f68f3bfaf8bd75e3c16370da7695a9071`.
 Полная приёмка M0 не объявляется: физические звук/синхронность и обрыв сети остаются `NOT_RUN`.
 Production-авторизация не реализована: debug-файл cookies не является готовым механизмом release.
 Совместимость YouTube и yt-dlp может измениться. Первый запуск и JS challenge занимают время;
-buffering не выдаётся за воспроизведение до появления реального кадра. Тестовая сессия удалена.
+buffering не выдаётся за воспроизведение до появления реального кадра. После дополнительной проверки
+тестовая сессия оставлена включённой по требованию владельца; cookies не удалялись.
 
 Следующий шаг: владельцу подтвердить слышимый звук/синхронность и при возможности выполнить ручной
 обрыв/возврат сети на H728 для M0-03, M0-04 и M0-09. M1 не начинается.
