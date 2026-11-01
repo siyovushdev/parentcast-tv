@@ -23,3 +23,5 @@ artifacts/
 *.aab
 *.hprof
 *.log
+__pycache__/
+*.py[cod]
