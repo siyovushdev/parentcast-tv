@@ -22,6 +22,7 @@ data class PlaybackFailure(
 
 enum class PlaybackStatus {
     IDLE,
+    WAITING_FOR_SESSION,
     LOADING,
     BUFFERING,
     PLAYING,

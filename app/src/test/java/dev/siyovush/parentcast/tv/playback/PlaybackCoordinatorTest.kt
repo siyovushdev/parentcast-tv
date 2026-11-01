@@ -263,16 +263,111 @@ class PlaybackCoordinatorTest {
         coordinator.close()
     }
 
+    @Test
+    fun restoredPauseWaitsForSessionAndResumesAfterEnable() = runTest {
+        var enabled = false
+        val initial = QueueState.Empty
+            .add(QueueItem("q1", "video000001"))
+            .play()
+            .togglePause()
+            .withPosition(7_000)
+        val player = FakePlayer()
+        val store = MemoryStore(initial)
+        val coordinator = coordinator(FakeSource(), store, player) { enabled }
+
+        coordinator.start()
+        advanceUntilIdle()
+        assertTrue(player.prepareCalls.isEmpty())
+        assertEquals(PlaybackIntent.PAUSE, store.state.intent)
+        assertEquals(7_000, store.state.positionMs)
+
+        enabled = true
+        coordinator.onSessionChanged()
+        advanceUntilIdle()
+        assertEquals(7_000, player.prepareCalls.single().positionMs)
+        assertFalse(player.prepareCalls.single().playWhenReady)
+        coordinator.close()
+    }
+
+    @Test
+    fun restoredPlayWaitsForSessionAndResumesAfterEnable() = runTest {
+        var enabled = false
+        val initial = QueueState.Empty
+            .add(QueueItem("q1", "video000001"))
+            .play()
+            .withPosition(8_000)
+        val player = FakePlayer()
+        val store = MemoryStore(initial)
+        val coordinator = coordinator(FakeSource(), store, player) { enabled }
+
+        coordinator.start()
+        advanceUntilIdle()
+        assertTrue(player.prepareCalls.isEmpty())
+        assertEquals(PlaybackIntent.PLAY, store.state.intent)
+        assertEquals(8_000, store.state.positionMs)
+
+        enabled = true
+        coordinator.onSessionChanged()
+        advanceUntilIdle()
+        assertEquals(8_000, player.prepareCalls.single().positionMs)
+        assertTrue(player.prepareCalls.single().playWhenReady)
+        coordinator.close()
+    }
+
+    @Test
+    fun explicitPlayWaitsForSessionBeforeStarting() = runTest {
+        var enabled = false
+        val player = FakePlayer()
+        val store = MemoryStore(QueueState.Empty.add(QueueItem("q1", "video000001")))
+        val coordinator = coordinator(FakeSource(), store, player) { enabled }
+        coordinator.start()
+
+        coordinator.play()
+        advanceUntilIdle()
+        assertTrue(player.prepareCalls.isEmpty())
+        assertEquals(PlaybackIntent.PLAY, store.state.intent)
+
+        enabled = true
+        coordinator.onSessionChanged()
+        advanceUntilIdle()
+        assertEquals(1, player.prepareCalls.size)
+        assertTrue(player.prepareCalls.single().playWhenReady)
+        coordinator.close()
+    }
+
+    @Test
+    fun stopNeverStartsAfterSessionEnable() = runTest {
+        var enabled = false
+        val initial = QueueState.Empty
+            .add(QueueItem("q1", "video000001"))
+            .withPosition(7_000)
+        val player = FakePlayer()
+        val store = MemoryStore(initial)
+        val coordinator = coordinator(FakeSource(), store, player) { enabled }
+        coordinator.start()
+
+        enabled = true
+        coordinator.onSessionChanged()
+        advanceUntilIdle()
+
+        assertTrue(player.prepareCalls.isEmpty())
+        assertEquals(PlaybackIntent.STOP, store.state.intent)
+        assertEquals(7_000, store.state.positionMs)
+        coordinator.close()
+    }
+
     private fun TestScope.coordinator(
         source: FakeSource,
         store: MemoryStore,
         player: FakePlayer,
+        authorizationGate: () -> Boolean = { true },
     ) = PlaybackCoordinator(
         source = source,
         store = store,
         player = player,
         scope = this,
         ioDispatcher = StandardTestDispatcher(testScheduler),
+        authorizationGate = authorizationGate,
     )
 
     private fun resolved(videoId: String) = ResolvedVideo(
