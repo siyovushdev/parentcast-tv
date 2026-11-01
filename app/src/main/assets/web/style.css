@@ -1,0 +1,41 @@
+:root {
+    color-scheme: dark;
+    font-family: system-ui, sans-serif;
+    background: #101418;
+    color: #e8eaed;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 960px; margin: auto; padding: 16px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 1.65rem; margin: 0; }
+h2 { font-size: 1.2rem; margin: 0 0 12px; }
+.card { background: #1b222b; border: 1px solid #33404d; border-radius: 14px; padding: 16px; margin: 16px 0; }
+.row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+label { display: block; margin: 10px 0; }
+input, textarea { width: 100%; padding: 12px; border: 1px solid #536474; border-radius: 8px; background: #101418; color: #fff; font: inherit; }
+textarea { resize: vertical; }
+button { min-height: 46px; padding: 10px 14px; border: 0; border-radius: 8px; background: #8ab4f8; color: #101418; font: inherit; font-weight: 600; cursor: pointer; }
+button:hover { filter: brightness(1.1); }
+button:disabled { opacity: .55; cursor: wait; }
+button.secondary { background: #536474; color: #fff; }
+button.danger { background: #f2b8b5; }
+.badge { padding: 6px 10px; border-radius: 8px; background: #536474; font-size: .9rem; }
+.badge.online { background: #285d42; }
+.badge.offline { background: #6b3a36; }
+.muted { color: #9aa0a6; }
+.small { font-size: .9rem; }
+.status { font-size: 1.15rem; font-weight: 600; }
+.error { color: #f2b8b5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.message { min-height: 1.4em; }
+.queue-item { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; border-top: 1px solid #33404d; padding: 10px 0; }
+.queue-item.current { border-left: 4px solid #8ab4f8; padding-left: 8px; }
+.queue-item .video-id { overflow-wrap: anywhere; }
+.queue-item .controls { display: flex; gap: 6px; flex-wrap: wrap; }
+.queue-item .controls button { min-height: 38px; padding: 6px 10px; font-size: .9rem; }
+.device { display: flex; justify-content: space-between; gap: 12px; align-items: center; border-top: 1px solid #33404d; padding: 10px 0; }
+[hidden] { display: none !important; }
+@media (min-width: 700px) {
+    .actions { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}

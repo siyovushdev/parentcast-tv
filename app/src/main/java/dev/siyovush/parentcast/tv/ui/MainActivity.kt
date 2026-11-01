@@ -19,15 +19,28 @@ import dev.siyovush.parentcast.tv.playback.Media3PlaybackPlayer
 import dev.siyovush.parentcast.tv.playback.PlaybackCoordinator
 import dev.siyovush.parentcast.tv.playback.PlaybackErrorKind
 import dev.siyovush.parentcast.tv.playback.PlaybackStatus
+import dev.siyovush.parentcast.tv.queue.AtomicIdempotencyStore
 import dev.siyovush.parentcast.tv.queue.AtomicQueueStore
 import dev.siyovush.parentcast.tv.queue.QueueItem
 import dev.siyovush.parentcast.tv.youtube.ytdlp.YtDlpYouTubeSource
 import dev.siyovush.parentcast.tv.youtube.YouTubeVideoIdParser
+import dev.siyovush.parentcast.tv.web.ApiController
+import dev.siyovush.parentcast.tv.web.AtomicTokenStore
+import dev.siyovush.parentcast.tv.web.LocalAddressProvider
+import dev.siyovush.parentcast.tv.web.MainThreadDispatcher
+import dev.siyovush.parentcast.tv.web.PairingManager
+import dev.siyovush.parentcast.tv.web.ParentHttpServer
+import dev.siyovush.parentcast.tv.web.PinSecurity
+import dev.siyovush.parentcast.tv.web.RequestSecurity
+import dev.siyovush.parentcast.tv.web.SharedPinSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : Activity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -45,6 +58,15 @@ class MainActivity : Activity() {
     private lateinit var coordinator: PlaybackCoordinator
     private lateinit var youTubeSession: dev.siyovush.parentcast.tv.youtube.YouTubeSession
     private lateinit var sessionStatus: TextView
+    private lateinit var pairingManager: PairingManager
+    private lateinit var tokenStore: AtomicTokenStore
+    private var httpServer: ParentHttpServer? = null
+    private lateinit var pinInput: EditText
+    private lateinit var savePinButton: Button
+    private lateinit var pairButton: Button
+    private lateinit var pairStatus: TextView
+    private lateinit var panelStatus: TextView
+    private lateinit var devicesContainer: LinearLayout
     private var latestSnapshot = CoordinatorSnapshot()
     private var renderedQueue: Pair<List<QueueItem>, Int>? = null
     private var debugVisible = false
@@ -70,6 +92,12 @@ class MainActivity : Activity() {
         queueContainer = debugRoot.findViewById(R.id.queueContainer)
         linkInput = debugRoot.findViewById(R.id.linkInput)
         sessionStatus = debugRoot.findViewById(R.id.sessionStatus)
+        pinInput = debugRoot.findViewById(R.id.pinInput)
+        savePinButton = debugRoot.findViewById(R.id.savePinButton)
+        pairButton = debugRoot.findViewById(R.id.pairButton)
+        pairStatus = debugRoot.findViewById(R.id.pairStatus)
+        panelStatus = debugRoot.findViewById(R.id.panelStatus)
+        devicesContainer = debugRoot.findViewById(R.id.devicesContainer)
 
         youTubeSession = dev.siyovush.parentcast.tv.youtube.YouTubeSessionFactory.create(this)
         val playerView = playerRoot.findViewById<PlayerView>(R.id.playerView)
@@ -83,6 +111,28 @@ class MainActivity : Activity() {
                 !youTubeSession.isSupported || youTubeSession.isEnabled
             },
         )
+
+        val addressProvider = LocalAddressProvider()
+        tokenStore = AtomicTokenStore(File(filesDir, "device-tokens.json"))
+        pairingManager = PairingManager(SharedPinSettings(this), tokenStore)
+        val apiController = ApiController(
+            pairingManager = pairingManager,
+            tokenStore = tokenStore,
+            idempotencyStore = AtomicIdempotencyStore(File(filesDir, "idempotency.json")),
+            coordinator = coordinator,
+            dispatcher = MainThreadDispatcher(handler),
+            security = RequestSecurity(addressProvider.panelHosts(), PANEL_PORT),
+            assetLoader = { path -> assets.open(path).bufferedReader().use { it.readText() } },
+        )
+        try {
+            httpServer = ParentHttpServer(PANEL_PORT, apiController).apply { start(5_000, true) }
+            panelStatus.text = panelText(addressProvider.panelHosts())
+        } catch (error: Exception) {
+            panelStatus.text = "HTTP server error: ${error.javaClass.simpleName}"
+        }
+        savePinButton.setOnClickListener { savePin() }
+        pairButton.setOnClickListener { beginPairing() }
+        renderPinUi()
 
         debugRoot.findViewById<Button>(R.id.addButton).setOnClickListener { addLink() }
         debugRoot.findViewById<Button>(R.id.playButton).setOnClickListener { coordinator.play() }
@@ -140,6 +190,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        httpServer?.stop()
         handler.removeCallbacks(savePosition)
         coordinator.savePosition()
         coordinator.close()
@@ -191,9 +242,61 @@ class MainActivity : Activity() {
         )
     }
 
+    private fun savePin() {
+        val pin = pinInput.text.toString()
+        if (!PinSecurity.isValidPin(pin)) {
+            debugStatus.text = "PIN должен содержать 6–12 цифр"
+            return
+        }
+        pairingManager.createPin(pin)
+        pinInput.text.clear()
+        debugStatus.text = "PIN сохранён"
+        renderPinUi()
+    }
+
+    private fun beginPairing() {
+        val challenge = pairingManager.beginPairing()
+        val expiry = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(challenge.expiresAtMs))
+        pairStatus.text = "Код: ${challenge.code} · до $expiry"
+    }
+
+    private fun renderPinUi() {
+        val hasPin = pairingManager.hasPin()
+        pinInput.visibility = View.VISIBLE
+        savePinButton.visibility = View.VISIBLE
+        pairButton.visibility = if (hasPin) View.VISIBLE else View.GONE
+        renderDevices()
+    }
+
+    private fun renderDevices() {
+        devicesContainer.removeAllViews()
+        val devices = tokenStore.list().filter { it.revokedAtMs == 0L }
+        if (devices.isEmpty()) {
+            devicesContainer.addView(TextView(this).apply {
+                text = "Нет сопряжённых устройств"
+                setTextColor(0xFF9AA0A6.toInt())
+            })
+            return
+        }
+        devices.forEach { device ->
+            devicesContainer.addView(Button(this).apply {
+                text = getString(R.string.debug_revoke, device.label)
+                setOnClickListener {
+                    tokenStore.revoke(device.deviceId)
+                    renderDevices()
+                }
+            })
+        }
+    }
+
+    private fun panelText(hosts: Set<String>): String = hosts.joinToString("\n") { host ->
+        if (host.contains(':')) "http://[$host]:$PANEL_PORT" else "http://$host:$PANEL_PORT"
+    }
+
     private fun showDebug() {
         debugVisible = true
         setContentView(debugRoot)
+        renderPinUi()
         render(latestSnapshot)
     }
 
@@ -205,6 +308,10 @@ class MainActivity : Activity() {
 
     private fun render(snapshot: CoordinatorSnapshot) {
         latestSnapshot = snapshot
+        if (debugVisible && (snapshot.status == PlaybackStatus.LOADING || snapshot.status == PlaybackStatus.BUFFERING)) {
+            showPlayer()
+            return
+        }
         val playerMessage = when (snapshot.status) {
             PlaybackStatus.IDLE -> getString(R.string.player_waiting)
             PlaybackStatus.WAITING_FOR_SESSION -> getString(R.string.player_waiting_session)
@@ -297,5 +404,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val SAVE_INTERVAL_MS = 5_000L
+        private const val PANEL_PORT = 8765
     }
 }

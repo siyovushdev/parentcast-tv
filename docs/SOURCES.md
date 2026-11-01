@@ -52,6 +52,15 @@ https://cli.github.com/manual/gh_repo_create
 CLI поддерживает создание приватного репозитория из локального проекта.
 Перед созданием проверять аккаунт, существование remote и права, не делать слепой повтор.
 
+## S7 — NanoHTTPD
+
+https://github.com/NanoHttpd/nanohttpd
+https://github.com/NanoHttpd/nanohttpd/blob/master/LICENSE.md
+
+В M1 используется закреплённая зависимость `org.nanohttpd:nanohttpd:2.3.1` под BSD-3-Clause.
+Для JSON POST вызывается `parseBody`, сырой текст доступен как `postData`. Код 421 отсутствует
+во встроенном `Response.Status` версии 2.3.1 и реализован через `IStatus` в приложении.
+
 ## Что не утверждается
 
 Точная работоспособная версия extractor на H728, фактические декодеры, возможность

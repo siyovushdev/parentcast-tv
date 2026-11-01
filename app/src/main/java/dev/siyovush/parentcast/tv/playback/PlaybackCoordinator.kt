@@ -37,6 +37,7 @@ class PlaybackCoordinator(
     private var listener: ((CoordinatorSnapshot) -> Unit)? = null
     private var started = false
     private var closed = false
+    private var updatedAtMs = System.currentTimeMillis()
 
     init {
         state = try {
@@ -164,6 +165,40 @@ class PlaybackCoordinator(
         emit()
     }
 
+    fun playNow(videoId: String) {
+        if (closed) return
+        state = state.playNow(QueueItem(UUID.randomUUID().toString(), videoId))
+        currentTitle = ""
+        diagnostics = ""
+        error = null
+        refreshAttempted = false
+        persist()
+        if (!authorizationGate()) {
+            status = PlaybackStatus.WAITING_FOR_SESSION
+            emit()
+            return
+        }
+        prepareCurrent()
+    }
+
+    fun movePending(queueItemId: String, moveUp: Boolean) {
+        if (closed) return
+        val updated = state.movePending(queueItemId, moveUp)
+        if (updated == state) return
+        state = updated
+        persist()
+        emit()
+    }
+
+    fun clearPending() {
+        if (closed) return
+        val updated = state.clearPending()
+        if (updated == state) return
+        state = updated
+        persist()
+        emit()
+    }
+
     fun savePosition() {
         val current = state.currentItem ?: return
         if (preparedItemId != current.queueItemId || state.finished) return
@@ -216,6 +251,13 @@ class PlaybackCoordinator(
         } else {
             PlaybackStatus.PAUSED
         }
+        error = null
+        emit()
+    }
+
+    override fun onPlaying(generation: Long) {
+        if (!isCurrentPlayerRequest(generation) || state.intent != PlaybackIntent.PLAY) return
+        status = PlaybackStatus.PLAYING
         error = null
         emit()
     }
@@ -328,20 +370,23 @@ class PlaybackCoordinator(
     }
 
     private fun persist() {
+        state = state.copy(version = state.version + 1)
         store.write(state)
     }
 
     private fun emit() {
-        listener?.invoke(
-            CoordinatorSnapshot(
-                queueState = state,
-                status = status,
-                currentTitle = currentTitle,
-                diagnostics = diagnostics,
-                error = error,
-                generation = generation,
-                storageWarning = storageWarning,
-            ),
-        )
+        updatedAtMs = System.currentTimeMillis()
+        listener?.invoke(currentSnapshot())
     }
+
+    fun currentSnapshot(): CoordinatorSnapshot = CoordinatorSnapshot(
+        queueState = state,
+        status = status,
+        currentTitle = currentTitle,
+        diagnostics = diagnostics,
+        error = error,
+        generation = generation,
+        storageWarning = storageWarning,
+        updatedAtMs = updatedAtMs,
+    )
 }

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>ParentCast TV — родительский пульт</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+    <header>
+        <div>
+            <h1>ParentCast TV</h1>
+            <p class="muted">Родительский пульт по домашней сети</p>
+        </div>
+        <strong id="connectionStatus" class="badge">Приставка недоступна</strong>
+    </header>
+
+    <section id="pairingSection" class="card">
+        <h2>Сопряжение с приставкой</h2>
+        <p class="muted">PIN создаётся на ТВ. Одноразовый код действует 2 минуты.</p>
+        <label>Название устройства <input id="deviceLabel" autocomplete="off" maxlength="40" placeholder="Телефон или Ubuntu"></label>
+        <label>PIN с ТВ <input id="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="12"></label>
+        <label>Одноразовый код <input id="pairingCode" inputmode="numeric" autocomplete="off" maxlength="6"></label>
+        <button id="pairButton">Сопрячь</button>
+        <p id="pairingMessage" class="message"></p>
+    </section>
+
+    <div id="controlSection" hidden>
+        <section class="card">
+            <h2>Состояние</h2>
+            <p id="playerStatus" class="status">Нет данных</p>
+            <p id="currentTitle"></p>
+            <p id="queueSummary" class="muted"></p>
+            <p id="updatedAt" class="muted"></p>
+            <p id="playbackError" class="error"></p>
+            <p id="diagnostics" class="muted small"></p>
+            <div class="actions">
+                <button data-playback="PLAY">Играть</button>
+                <button data-playback="PAUSE_RESUME">Пауза / продолжить</button>
+                <button data-playback="NEXT">Следующий</button>
+                <button data-playback="STOP" class="danger">Стоп</button>
+            </div>
+        </section>
+
+        <section class="card">
+            <h2>Включить сейчас</h2>
+            <label>YouTube-ссылка <input id="playNowLink" type="url" autocomplete="off" placeholder="https://youtu.be/…"></label>
+            <button id="playNowButton">Включить сейчас</button>
+        </section>
+
+        <section class="card">
+            <h2>Добавить в конец очереди</h2>
+            <p class="muted">По одной ссылке на строку. Добавление не запускает воспроизведение.</p>
+            <textarea id="links" rows="4" placeholder="https://www.youtube.com/watch?v=…&#10;https://youtu.be/…"></textarea>
+            <button id="addButton">Добавить</button>
+            <p id="commandMessage" class="message"></p>
+            <button id="retryCommandButton" class="secondary" hidden>Повторить последнюю команду</button>
+        </section>
+
+        <section class="card">
+            <div class="row">
+                <h2>Очередь</h2>
+                <button id="clearPendingButton" class="secondary">Очистить ожидающие</button>
+            </div>
+            <div id="queue"></div>
+        </section>
+
+        <section class="card">
+            <h2>Сопряжённые устройства</h2>
+            <div id="devices"></div>
+        </section>
+    </div>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

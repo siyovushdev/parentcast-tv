@@ -1,4 +1,4 @@
-# Уведомления сторонних компонентов M0
+# Уведомления сторонних компонентов M0–M1
 
 Проект использует зависимости как внешние артефакты; их исходный код не скопирован в этот
 репозиторий. При передаче APK необходимо сохранять применимые лицензии и уведомления.
@@ -15,11 +15,12 @@
 | Commons IO | `2.5` | Apache-2.0 | https://github.com/apache/commons-io |
 | OkHttp | `4.12.0` | Apache-2.0 | https://github.com/square/okhttp/tree/parent-4.12.0 |
 | Kotlin stdlib / coroutines | `2.0.21` / `1.9.0` | Apache-2.0 | https://github.com/JetBrains/kotlin и https://github.com/Kotlin/kotlinx.coroutines |
+| NanoHTTPD | `2.3.1` | BSD-3-Clause | https://github.com/NanoHttpd/nanohttpd |
 
 Полные тексты лицензий находятся в `app/src/main/assets/licenses/` и упаковываются в APK,
-включая GPL-3.0, Unlicense, MIT, ISC и Apache-2.0. NewPipe Extractor и youtubedl-android не
-перелицензируются; их свободные условия, включая обязательства при распространении производной
-работы, сохраняются. Публичная публикация APK в M0 не выполняется.
+включая GPL-3.0, Unlicense, MIT, ISC, BSD-3-Clause и Apache-2.0. NewPipe Extractor и
+youtubedl-android не перелицензируются; их свободные условия, включая обязательства при
+распространении производной работы, сохраняются. Публичный релиз APK не выполняется.
 
 Транзитивные зависимости остаются под собственными лицензиями. Их точные координаты можно
 получить командой `./gradlew app:dependencies --configuration debugRuntimeClasspath`.
