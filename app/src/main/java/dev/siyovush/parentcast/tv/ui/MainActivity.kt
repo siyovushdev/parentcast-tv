@@ -21,7 +21,7 @@ import dev.siyovush.parentcast.tv.playback.PlaybackErrorKind
 import dev.siyovush.parentcast.tv.playback.PlaybackStatus
 import dev.siyovush.parentcast.tv.queue.AtomicQueueStore
 import dev.siyovush.parentcast.tv.queue.QueueItem
-import dev.siyovush.parentcast.tv.youtube.NewPipeYouTubeSource
+import dev.siyovush.parentcast.tv.youtube.ytdlp.YtDlpYouTubeSource
 import dev.siyovush.parentcast.tv.youtube.YouTubeVideoIdParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -75,7 +75,7 @@ class MainActivity : Activity() {
         val playerView = playerRoot.findViewById<PlayerView>(R.id.playerView)
         playbackPlayer = Media3PlaybackPlayer(playerView, youTubeSession)
         coordinator = PlaybackCoordinator(
-            source = NewPipeYouTubeSource(youTubeSession),
+            source = YtDlpYouTubeSource(this, youTubeSession),
             store = AtomicQueueStore(File(filesDir, "queue-state.json")),
             player = playbackPlayer,
             scope = scope,

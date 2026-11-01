@@ -6,14 +6,20 @@
 | Компонент | Версия | Лицензия | Первичный источник |
 |---|---|---|---|
 | NewPipe Extractor | `v0.26.5`, commit `f9e6bb808f82bf3e4dc1f2a29a16fd376931c8ef` | GPL-3.0-or-later | https://github.com/TeamNewPipe/NewPipeExtractor/tree/v0.26.5 |
+| youtubedl-android library/common | `0.18.1` | GPL-3.0 | https://github.com/yausername/youtubedl-android |
+| yt-dlp zipapp | `2026.10.26`, SHA-256 `e51e69e89489f199530f13d32a4342da3ddb2cf34842f364603a066db05afbf3` | Unlicense | https://github.com/yt-dlp/yt-dlp/releases/tag/2026.10.26 |
+| yt-dlp-ejs | `0.8.0` | Unlicense; bundled MIT/ISC components | https://github.com/yt-dlp/ejs |
+| QuickJS | `2025-04-26` | MIT | https://github.com/bellard/quickjs |
 | AndroidX Media3 Exoplayer/UI | `1.5.1` | Apache-2.0 | https://github.com/androidx/media/tree/1.5.1 |
+| Jackson databind | `2.11.1` | Apache-2.0 | https://github.com/FasterXML/jackson-databind |
+| Commons IO | `2.5` | Apache-2.0 | https://github.com/apache/commons-io |
 | OkHttp | `4.12.0` | Apache-2.0 | https://github.com/square/okhttp/tree/parent-4.12.0 |
 | Kotlin stdlib / coroutines | `2.0.21` / `1.9.0` | Apache-2.0 | https://github.com/JetBrains/kotlin и https://github.com/Kotlin/kotlinx.coroutines |
 
-Полный текст GPL-3.0 из выбранного тега NewPipe Extractor и текст Apache-2.0 находятся в
-`app/src/main/assets/licenses/` и упаковываются в APK. NewPipe Extractor не перелицензируется:
-его свободные условия, включая обязательства при распространении производной работы, сохраняются.
-Публичная публикация APK в M0 не выполняется.
+Полные тексты лицензий находятся в `app/src/main/assets/licenses/` и упаковываются в APK,
+включая GPL-3.0, Unlicense, MIT, ISC и Apache-2.0. NewPipe Extractor и youtubedl-android не
+перелицензируются; их свободные условия, включая обязательства при распространении производной
+работы, сохраняются. Публичная публикация APK в M0 не выполняется.
 
 Транзитивные зависимости остаются под собственными лицензиями. Их точные координаты можно
 получить командой `./gradlew app:dependencies --configuration debugRuntimeClasspath`.
