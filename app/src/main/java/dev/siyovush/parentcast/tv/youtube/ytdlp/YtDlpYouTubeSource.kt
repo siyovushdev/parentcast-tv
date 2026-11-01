@@ -58,7 +58,6 @@ class YtDlpYouTubeSource(
             .addOption("--dump-json")
             .addOption("--no-playlist")
             .addOption("--ignore-config")
-            .addOption("--no-call-home")
             .addOption("--no-warnings")
             .addOption("--socket-timeout", 20)
             .addOption("--retries", 2)
