@@ -58,9 +58,6 @@ import dev.siyovush.parentcast.tv.parent.PrivilegedModeRequirements
 import dev.siyovush.parentcast.tv.parent.PrivilegedTrialSession
 import java.lang.ref.WeakReference
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 open class MainActivity : Activity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -85,8 +82,6 @@ open class MainActivity : Activity() {
     private lateinit var pinInput: EditText
     private lateinit var newPinInput: EditText
     private lateinit var savePinButton: Button
-    private lateinit var pairButton: Button
-    private lateinit var pairStatus: TextView
     private lateinit var panelStatus: TextView
     private lateinit var devicesContainer: LinearLayout
     private var latestSnapshot = CoordinatorSnapshot()
@@ -153,8 +148,6 @@ open class MainActivity : Activity() {
             it.isSaveEnabled = false
         }
         savePinButton = debugRoot.findViewById(R.id.savePinButton)
-        pairButton = debugRoot.findViewById(R.id.pairButton)
-        pairStatus = debugRoot.findViewById(R.id.pairStatus)
         panelStatus = debugRoot.findViewById(R.id.panelStatus)
         devicesContainer = debugRoot.findViewById(R.id.devicesContainer)
 
@@ -205,7 +198,6 @@ open class MainActivity : Activity() {
             panelStatus.text = "HTTP server error: ${error.javaClass.simpleName}"
         }
         savePinButton.setOnClickListener { savePin() }
-        pairButton.setOnClickListener { beginPairing() }
         renderPinUi()
         configureParentModeControls()
 
@@ -400,18 +392,6 @@ open class MainActivity : Activity() {
         renderPinUi()
     }
 
-    private fun beginPairing() {
-        if (!requireParent()) return
-        val challenge = pairingManager.beginPairing(pinInput.text.toString())
-        if (challenge == null) {
-            pairStatus.setText(R.string.debug_pin_required)
-            return
-        }
-        pinInput.text.clear()
-        val expiry = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(challenge.expiresAtMs))
-        pairStatus.text = "Код: ${challenge.code} · до $expiry"
-    }
-
     private fun renderPinUi() {
         val hasPin = pairingManager.hasPin()
         pinInput.visibility = View.VISIBLE
@@ -419,7 +399,6 @@ open class MainActivity : Activity() {
         newPinInput.visibility = if (hasPin) View.VISIBLE else View.GONE
         savePinButton.visibility = View.VISIBLE
         savePinButton.setText(if (hasPin) R.string.debug_change_pin else R.string.debug_save_pin)
-        pairButton.visibility = if (hasPin) View.VISIBLE else View.GONE
         renderDevices()
     }
 
@@ -660,7 +639,6 @@ open class MainActivity : Activity() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         pinInput.text.clear()
         newPinInput.text.clear()
-        pairStatus.setText(R.string.debug_pair_status)
         debugVisible = false
         setContentView(playerRoot)
         render(latestSnapshot)

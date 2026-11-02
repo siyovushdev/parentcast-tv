@@ -52,7 +52,6 @@ internal class ApiController(
         if (!security.isStateChangeAllowed(request.headers)) return ApiResponse(403, error("FORBIDDEN"))
         val json = request.json() ?: return ApiResponse(400, error("BAD_REQUEST"))
         val result = pairingManager.completePairing(
-            code = json.optString("code"),
             pin = json.optString("pin"),
             label = json.optString("label", "Browser").take(40),
             clientKey = request.clientKey,

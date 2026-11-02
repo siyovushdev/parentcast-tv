@@ -118,17 +118,8 @@ def create_pin_if_needed():
     return pin
 
 
-def begin_pairing(current_pin):
-    set_text("pinInput", str(current_pin))
-    click("pairButton")
-    wait_until(lambda: text("pairStatus").startswith("Код: "), "Pairing code was not created")
-    raw = text("pairStatus")
-    return raw.split("Код: ", 1)[1].split(" ", 1)[0]
-
-
 def pair_device(label, pin):
-    code = begin_pairing(pin)
-    status, result = api("/api/pair", "POST", {"label": label, "pin": pin, "code": code})
+    status, result = api("/api/pair", "POST", {"label": label, "pin": pin})
     if status != 200:
         raise RuntimeError(f"Pairing failed: {status} {result.get('error')}")
     return result["token"], result["deviceId"]

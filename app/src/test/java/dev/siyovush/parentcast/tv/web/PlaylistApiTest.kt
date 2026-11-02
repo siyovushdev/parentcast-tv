@@ -253,8 +253,7 @@ class PlaylistApiTest {
         }
 
         fun pair(): String {
-            val challenge = pairing.beginPairing("739251")!!
-            return pairing.completePairing(challenge.code, "739251", "Test", "client")!!.second
+            return pairing.completePairing("739251", "Test", "client")!!.second
         }
 
         fun get(token: String, path: String) = controller.handle(ApiRequest("GET", path, headers(token), "", "client"))
