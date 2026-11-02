@@ -49,6 +49,20 @@
             android:textColorHint="#9AA0A6"
             android:textSize="18sp" />
 
+        <EditText
+            android:id="@+id/newPinInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/debug_new_pin_hint"
+            android:importantForAutofill="no"
+            android:inputType="numberPassword"
+            android:maxLength="12"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#9AA0A6"
+            android:textSize="18sp"
+            android:visibility="gone" />
+
         <Button
             android:id="@+id/savePinButton"
             android:layout_width="match_parent"

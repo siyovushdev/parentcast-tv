@@ -35,7 +35,14 @@
     <string name="debug_session_error">Операция с сессией не выполнена</string>
     <string name="debug_panel_title">LAN-панель (HTTP, без шифрования)</string>
     <string name="debug_pin_hint">PIN: 6–12 цифр</string>
+    <string name="debug_current_pin_hint">Действующий PIN для подтверждения</string>
+    <string name="debug_new_pin_hint">Новый PIN: 6–12 цифр</string>
     <string name="debug_save_pin">Сохранить PIN</string>
+    <string name="debug_change_pin">Сменить PIN</string>
+    <string name="debug_pin_invalid">PIN должен содержать 6–12 цифр</string>
+    <string name="debug_pin_wrong">Неверный действующий PIN</string>
+    <string name="debug_pin_required">Для сопряжения введите действующий PIN</string>
+    <string name="debug_pin_saved">PIN сохранён</string>
     <string name="debug_pair">Сопряжение на 2 минуты</string>
     <string name="debug_pair_status">Одноразовый код появится здесь</string>
     <string name="debug_devices">Сопряжённые устройства</string>

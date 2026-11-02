@@ -89,10 +89,9 @@ function privateValue(command, input) {
 try {
     await waitFor("document.readyState === 'complete'", "Panel did not load", 30000);
     if (await evaluate("document.getElementById('controlSection').hidden")) {
-        const {randomInt} = await import("node:crypto");
-        const pin = String(randomInt(100000, 1000000));
-        privateValue("import sys; from tools import m1_hardware_test as h; h.adb('shell', 'input', 'keyevent', 'KEYCODE_MENU'); pin=sys.stdin.read(); h.set_text('pinInput', pin); h.click('savePinButton'); h.wait_until(lambda: h.text('pinInput') != '•' * len(pin), 'PIN was not saved')", pin);
-        const code = privateValue("from tools.m1_hardware_test import begin_pairing; print(begin_pairing())");
+        const pin = privateValue("from tools import m1_hardware_test as h; h.adb('shell', 'input', 'keyevent', 'KEYCODE_MENU'); print(h.create_pin_if_needed() or '')");
+        if (!pin) throw new Error("PIN setup requires PARENTCAST_CURRENT_PIN for an existing PIN");
+        const code = privateValue("import sys; from tools.m1_hardware_test import begin_pairing; print(begin_pairing(sys.stdin.read()))", pin);
         await setValue("deviceLabel", "Ubuntu Chrome M1");
         await setValue("pin", pin);
         await setValue("pairingCode", code);

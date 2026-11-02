@@ -62,6 +62,7 @@ class MainActivity : Activity() {
     private lateinit var tokenStore: AtomicTokenStore
     private var httpServer: ParentHttpServer? = null
     private lateinit var pinInput: EditText
+    private lateinit var newPinInput: EditText
     private lateinit var savePinButton: Button
     private lateinit var pairButton: Button
     private lateinit var pairStatus: TextView
@@ -93,6 +94,7 @@ class MainActivity : Activity() {
         linkInput = debugRoot.findViewById(R.id.linkInput)
         sessionStatus = debugRoot.findViewById(R.id.sessionStatus)
         pinInput = debugRoot.findViewById(R.id.pinInput)
+        newPinInput = debugRoot.findViewById(R.id.newPinInput)
         savePinButton = debugRoot.findViewById(R.id.savePinButton)
         pairButton = debugRoot.findViewById(R.id.pairButton)
         pairStatus = debugRoot.findViewById(R.id.pairStatus)
@@ -243,19 +245,30 @@ class MainActivity : Activity() {
     }
 
     private fun savePin() {
-        val pin = pinInput.text.toString()
-        if (!PinSecurity.isValidPin(pin)) {
-            debugStatus.text = "PIN должен содержать 6–12 цифр"
+        val hasPin = pairingManager.hasPin()
+        val currentPin = if (hasPin) pinInput.text.toString() else null
+        val newPin = if (hasPin) newPinInput.text.toString() else pinInput.text.toString()
+        if (!PinSecurity.isValidPin(newPin)) {
+            debugStatus.setText(R.string.debug_pin_invalid)
             return
         }
-        pairingManager.createPin(pin)
+        if (!pairingManager.createPin(newPin, currentPin)) {
+            debugStatus.setText(R.string.debug_pin_wrong)
+            return
+        }
         pinInput.text.clear()
-        debugStatus.text = "PIN сохранён"
+        newPinInput.text.clear()
+        debugStatus.setText(R.string.debug_pin_saved)
         renderPinUi()
     }
 
     private fun beginPairing() {
-        val challenge = pairingManager.beginPairing()
+        val challenge = pairingManager.beginPairing(pinInput.text.toString())
+        if (challenge == null) {
+            pairStatus.setText(R.string.debug_pin_required)
+            return
+        }
+        pinInput.text.clear()
         val expiry = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(challenge.expiresAtMs))
         pairStatus.text = "Код: ${challenge.code} · до $expiry"
     }
@@ -263,7 +276,10 @@ class MainActivity : Activity() {
     private fun renderPinUi() {
         val hasPin = pairingManager.hasPin()
         pinInput.visibility = View.VISIBLE
+        pinInput.setHint(if (hasPin) R.string.debug_current_pin_hint else R.string.debug_pin_hint)
+        newPinInput.visibility = if (hasPin) View.VISIBLE else View.GONE
         savePinButton.visibility = View.VISIBLE
+        savePinButton.setText(if (hasPin) R.string.debug_change_pin else R.string.debug_save_pin)
         pairButton.visibility = if (hasPin) View.VISIBLE else View.GONE
         renderDevices()
     }

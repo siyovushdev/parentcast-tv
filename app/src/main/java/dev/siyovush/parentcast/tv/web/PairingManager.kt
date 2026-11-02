@@ -11,24 +11,31 @@ class PairingManager(
     private var challenge: PairingChallenge? = null
     private val attempts = PinAttemptLimiter()
 
+    @Synchronized
     fun hasPin(): Boolean = pinSettings.hasPin()
 
-    fun createPin(pin: String) {
-        require(PinSecurity.isValidPin(pin))
+    @Synchronized
+    fun createPin(pin: String, currentPin: String? = null): Boolean {
+        if (!PinSecurity.isValidPin(pin)) return false
+        if (hasPin() && !isCurrentPin(currentPin)) return false
         pinSettings.savePinRecord(PinSecurity.hashPin(pin))
+        return true
     }
 
-    fun beginPairing(): PairingChallenge {
+    @Synchronized
+    fun beginPairing(currentPin: String): PairingChallenge? {
+        if (!hasPin() || !isCurrentPin(currentPin)) return null
         val now = clock()
         val code = (random.nextInt(900_000) + 100_000).toString()
         return PairingChallenge(code, now + PAIRING_WINDOW_MS).also { challenge = it }
     }
 
+    @Synchronized
     fun completePairing(code: String, pin: String, label: String, clientKey: String): Pair<DeviceRecord, String>? {
         if (!attempts.isAllowed(clientKey, clock()) || !hasPin()) return null
         val current = challenge
         if (current == null || current.code != code || current.expiresAtMs < clock()) return null
-        if (!PinSecurity.isValidPin(pin) || !PinSecurity.verifyPin(pin, pinSettings.pinRecord().orEmpty())) {
+        if (!isCurrentPin(pin)) {
             attempts.recordFailure(clientKey, clock())
             return null
         }
@@ -36,6 +43,10 @@ class PairingManager(
         challenge = null
         return tokenStore.create(label)
     }
+
+    private fun isCurrentPin(pin: String?): Boolean =
+        pin != null && PinSecurity.isValidPin(pin) &&
+            PinSecurity.verifyPin(pin, pinSettings.pinRecord().orEmpty())
 
     private data class PinAttemptLimiter(
         val maxFailures: Int = 5,

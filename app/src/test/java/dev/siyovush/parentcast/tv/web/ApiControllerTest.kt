@@ -204,7 +204,7 @@ class ApiControllerTest {
         )
 
         fun pair(): String {
-            val challenge = pairingManager.beginPairing()
+            val challenge = pairingManager.beginPairing("739251")!!
             val body = JSONObject()
                 .put("code", challenge.code)
                 .put("pin", "739251")

@@ -102,14 +102,24 @@ def create_pin_if_needed():
     ids = {node.attrib.get("resource-id", "") for node in ui_root().iter("node")}
     if not any(resource_id.endswith(":id/pinInput") for resource_id in ids):
         return None
+    has_existing_pin = any(resource_id.endswith(":id/newPinInput") for resource_id in ids)
+    current_pin = os.environ.get("PARENTCAST_CURRENT_PIN") if has_existing_pin else None
+    if has_existing_pin and not current_pin:
+        return None
     pin = secrets.randbelow(900000) + 100000
-    set_text("pinInput", str(pin))
+    if has_existing_pin:
+        set_text("pinInput", current_pin)
+        set_text("newPinInput", str(pin))
+    else:
+        set_text("pinInput", str(pin))
     click("savePinButton")
-    wait_until(lambda: text("pinInput") != "•" * len(str(pin)), "PIN was not saved")
+    entered_pin = current_pin if has_existing_pin else str(pin)
+    wait_until(lambda: text("pinInput") != "•" * len(entered_pin), "PIN was not saved")
     return pin
 
 
-def begin_pairing():
+def begin_pairing(current_pin):
+    set_text("pinInput", str(current_pin))
     click("pairButton")
     wait_until(lambda: text("pairStatus").startswith("Код: "), "Pairing code was not created")
     raw = text("pairStatus")
@@ -117,7 +127,7 @@ def begin_pairing():
 
 
 def pair_device(label, pin):
-    code = begin_pairing()
+    code = begin_pairing(pin)
     status, result = api("/api/pair", "POST", {"label": label, "pin": pin, "code": code})
     if status != 200:
         raise RuntimeError(f"Pairing failed: {status} {result.get('error')}")
