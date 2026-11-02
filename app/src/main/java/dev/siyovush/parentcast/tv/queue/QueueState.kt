@@ -26,6 +26,7 @@ data class QueueState(
     val positionMs: Long = 0,
     val intent: PlaybackIntent = PlaybackIntent.STOP,
     val finished: Boolean = false,
+    val version: Long = 0,
 ) {
     init {
         require(items.map(QueueItem::queueItemId).distinct().size == items.size)
@@ -49,6 +50,28 @@ data class QueueState(
         items = items + item,
         currentIndex = if (items.isEmpty()) 0 else currentIndex,
     )
+
+    fun playNow(item: QueueItem): QueueState {
+        if (items.isEmpty()) {
+            return QueueState(items = listOf(item), currentIndex = 0, intent = PlaybackIntent.PLAY)
+        }
+        if (finished) {
+            return copy(
+                items = items + item,
+                currentIndex = items.size,
+                positionMs = 0,
+                intent = PlaybackIntent.PLAY,
+                finished = false,
+            )
+        }
+        return copy(
+            items = items.take(currentIndex + 1) + item + items.drop(currentIndex + 1),
+            currentIndex = currentIndex + 1,
+            positionMs = 0,
+            intent = PlaybackIntent.PLAY,
+            finished = false,
+        )
+    }
 
     fun play(): QueueState {
         if (items.isEmpty()) return this
@@ -96,6 +119,21 @@ data class QueueState(
         if (index <= currentIndex) return this
         return copy(items = items.filterNot { it.queueItemId == queueItemId })
     }
+
+    fun movePending(queueItemId: String, moveUp: Boolean): QueueState {
+        val index = items.indexOfFirst { it.queueItemId == queueItemId }
+        val otherIndex = if (moveUp) index - 1 else index + 1
+        if (index <= currentIndex || otherIndex <= currentIndex || otherIndex >= items.size) {
+            return this
+        }
+        return copy(
+            items = items.toMutableList().apply {
+                add(otherIndex, removeAt(index))
+            },
+        )
+    }
+
+    fun clearPending(): QueueState = copy(items = items.take(currentIndex + 1))
 
     fun withPosition(positionMs: Long): QueueState = copy(
         positionMs = positionMs.coerceAtLeast(0),

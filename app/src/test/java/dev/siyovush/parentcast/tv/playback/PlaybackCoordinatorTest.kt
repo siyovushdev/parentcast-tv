@@ -227,6 +227,26 @@ class PlaybackCoordinatorTest {
     }
 
     @Test
+    fun resumeReportsPlayingWhenMedia3IsPlayingAgain() = runTest {
+        val coordinator = coordinator(FakeSource(), MemoryStore(), FakePlayer())
+        var snapshot = CoordinatorSnapshot()
+        coordinator.setListener { snapshot = it }
+        coordinator.start()
+        coordinator.add("video000001")
+        coordinator.play()
+        advanceUntilIdle()
+        coordinator.onFirstFrame(snapshot.generation)
+        coordinator.pauseResume()
+        coordinator.pauseResume()
+        assertEquals(PlaybackStatus.BUFFERING, snapshot.status)
+
+        coordinator.onPlaying(snapshot.generation)
+
+        assertEquals(PlaybackStatus.PLAYING, snapshot.status)
+        coordinator.close()
+    }
+
+    @Test
     fun restoredStopIntentDoesNotExtractOrAutoplay() = runTest {
         val initial = QueueState.Empty
             .add(QueueItem("q1", "video000001"))
@@ -353,6 +373,22 @@ class PlaybackCoordinatorTest {
         assertTrue(player.prepareCalls.isEmpty())
         assertEquals(PlaybackIntent.STOP, store.state.intent)
         assertEquals(7_000, store.state.positionMs)
+        coordinator.close()
+    }
+
+    @Test
+    fun readingSnapshotDoesNotInventPlayerUpdateTime() = runTest {
+        val coordinator = coordinator(FakeSource(), MemoryStore(), FakePlayer())
+        coordinator.start()
+        val initial = coordinator.currentSnapshot()
+
+        Thread.sleep(2)
+        val reread = coordinator.currentSnapshot()
+        coordinator.add("video000001")
+        val changed = coordinator.currentSnapshot()
+
+        assertEquals(initial.updatedAtMs, reread.updatedAtMs)
+        assertTrue(changed.updatedAtMs >= initial.updatedAtMs)
         coordinator.close()
     }
 

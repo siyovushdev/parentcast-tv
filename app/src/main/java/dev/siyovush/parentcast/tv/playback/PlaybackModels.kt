@@ -40,6 +40,7 @@ data class CoordinatorSnapshot(
     val error: PlaybackFailure? = null,
     val generation: Long = 0,
     val storageWarning: Boolean = false,
+    val updatedAtMs: Long = 0,
 )
 
 interface PlaybackPlayer {
@@ -55,6 +56,7 @@ interface PlaybackPlayer {
         fun onEnded(generation: Long) = Unit
         fun onError(generation: Long, failure: PlaybackFailure) = Unit
         fun onFirstFrame(generation: Long) = Unit
+        fun onPlaying(generation: Long) = Unit
         fun onBuffering(generation: Long) = Unit
         fun onDiagnostics(generation: Long, diagnostics: String) = Unit
     }

@@ -30,6 +30,7 @@ class Media3PlaybackPlayer(
     private var listener: PlaybackPlayer.Listener? = null
     private var activeGeneration = 0L
     private var activeVideo: ResolvedVideo? = null
+    private var hasRenderedFirstFrame = false
 
     init {
         playerView.player = player
@@ -54,7 +55,12 @@ class Media3PlaybackPlayer(
                     }
                 }
 
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if (isPlaying && hasRenderedFirstFrame) listener?.onPlaying(activeGeneration)
+                }
+
                 override fun onRenderedFirstFrame() {
+                    hasRenderedFirstFrame = true
                     listener?.onFirstFrame(activeGeneration)
                     dispatchDiagnostics()
                 }
@@ -82,6 +88,7 @@ class Media3PlaybackPlayer(
     ) {
         activeGeneration = generation
         activeVideo = video
+        hasRenderedFirstFrame = false
         val videoSource = progressiveSource(video.video)
         val source = video.audio?.let { audio ->
             MergingMediaSource(videoSource, progressiveSource(audio))
@@ -103,6 +110,7 @@ class Media3PlaybackPlayer(
     override fun stop() {
         activeGeneration = 0
         activeVideo = null
+        hasRenderedFirstFrame = false
         player.stop()
         player.clearMediaItems()
     }

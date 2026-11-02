@@ -33,6 +33,7 @@ object QueueSnapshotCodec {
             .put("positionMs", state.positionMs)
             .put("intent", state.intent.name)
             .put("finished", state.finished)
+            .put("queueVersion", state.version)
             .toString()
     }
 
@@ -59,6 +60,7 @@ object QueueSnapshotCodec {
             positionMs = root.getLong("positionMs"),
             intent = PlaybackIntent.valueOf(root.getString("intent")),
             finished = root.getBoolean("finished"),
+            version = root.optLong("queueVersion", 0),
         )
     }
 }

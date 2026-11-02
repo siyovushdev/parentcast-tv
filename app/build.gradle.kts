@@ -11,8 +11,8 @@ android {
         applicationId = "dev.siyovush.parentcast.tv"
         minSdk = 33
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-m0"
+        versionCode = 3
+        versionName = "0.1.0-m1"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -51,6 +51,7 @@ dependencies {
     implementation("commons-io:commons-io:2.5")
     implementation("com.github.teamnewpipe:NewPipeExtractor:v0.26.5")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     testImplementation("junit:junit:4.13.2")
