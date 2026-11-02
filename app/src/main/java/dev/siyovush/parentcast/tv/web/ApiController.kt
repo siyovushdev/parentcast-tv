@@ -30,11 +30,13 @@ internal class ApiController(
     private val dispatcher: CallDispatcher,
     private val security: RequestSecurity,
     private val assetLoader: (String) -> String,
+    private val playlists: PlaylistApi? = null,
 ) {
     fun handle(request: ApiRequest): ApiResponse {
         if (!security.isHostAllowed(request.headers["host"])) {
             return ApiResponse(421, error("MISDIRECTED_HOST"))
         }
+        if (request.body.length > 65_536) return ApiResponse(413, error("BODY_TOO_LARGE"))
         if (request.method == "OPTIONS") return ApiResponse(403, error("FORBIDDEN"))
         return when {
             request.method == "GET" && request.path == "/" -> staticAsset("web/index.html", "text/html; charset=utf-8")
@@ -68,6 +70,9 @@ internal class ApiController(
         val device = authorizedDevice(request.headers) ?: return ApiResponse(401, error("UNAUTHORIZED"))
         if (request.method == "GET" && request.path == "/api/state") return ApiResponse(200, stateBody())
         if (request.method == "GET" && request.path == "/api/devices") return devices()
+        if (request.method == "GET") {
+            playlists?.read(request.path, device.deviceId)?.let { return it }
+        }
         if (request.method != "POST") return ApiResponse(404, error("NOT_FOUND"))
         if (!security.isStateChangeAllowed(request.headers)) return ApiResponse(403, error("FORBIDDEN"))
         return when (request.path) {
@@ -78,7 +83,11 @@ internal class ApiController(
             "/api/queue/move" -> mutation(request, device) { json -> movePending(json) }
             "/api/queue/clear" -> mutation(request, device) { json -> clearPending(json) }
             "/api/devices/revoke" -> mutation(request, device) { json -> revoke(json) }
-            else -> ApiResponse(404, error("NOT_FOUND"))
+            else -> if (playlists?.handles(request.path) == true) {
+                mutation(request, device) { json ->
+                    playlists.mutate(request.path, device.deviceId, json, commandStorageKey(request, device, json), requestFingerprint(json)).let { it.code to it.body }
+                }
+            } else ApiResponse(404, error("NOT_FOUND"))
         }
     }
 
@@ -97,12 +106,26 @@ internal class ApiController(
         val json = request.json() ?: return ApiResponse(400, error("BAD_REQUEST"))
         val key = json.optString("idempotencyKey")
         if (key.length < 8 || key.length > 100) return ApiResponse(400, error("BAD_REQUEST"))
-        val storageKey = "${device.deviceId}|${request.path}|$key"
-        idempotencyStore.get(storageKey)?.let { return ApiResponse(it.code, it.body) }
+        val storageKey = commandStorageKey(request, device, json)
+        val fingerprint = if (playlists?.handles(request.path) == true) requestFingerprint(json) else null
+        idempotencyStore.get(storageKey)?.let {
+            if (fingerprint != null && it.requestFingerprint != fingerprint) return ApiResponse(409, error("IDEMPOTENCY_KEY_REUSED"))
+            return ApiResponse(it.code, it.body)
+        }
         val result = action(json)
-        idempotencyStore.put(storageKey, StoredResponse(result.first, result.second, System.currentTimeMillis()))
+        if (fingerprint == null || (result.first < 500 && result.first != 429)) {
+            try {
+                idempotencyStore.put(storageKey, StoredResponse(result.first, result.second, System.currentTimeMillis(), fingerprint))
+            } catch (_: Exception) {
+                // Batch receipt already lives in the same atomic file as queue changes.
+                return ApiResponse(503, error("COMMAND_STORAGE_ERROR"))
+            }
+        }
         return ApiResponse(result.first, result.second)
     }
+
+    private fun commandStorageKey(request: ApiRequest, device: DeviceRecord, json: JSONObject): String =
+        "${device.deviceId}|${request.path}|${json.optString("idempotencyKey")}"
 
     private fun add(json: JSONObject): Pair<Int, String> {
         val links = json.optJSONArray("links") ?: return badRequest()
@@ -184,7 +207,7 @@ internal class ApiController(
         return ApiResponse(200, JSONObject().put("devices", items).toString())
     }
 
-    private fun stateBody(): String {
+    internal fun stateBody(): String {
         val snapshot = dispatcher.call { coordinator.currentSnapshot() }
         return snapshotJson(snapshot).toString()
     }
@@ -238,4 +261,18 @@ internal class ApiController(
     } catch (error: Exception) {
         null
     }
+}
+
+internal fun requestFingerprint(json: JSONObject): String {
+    fun canonical(value: Any?): String = when (value) {
+        is JSONObject -> value.keys().asSequence().toList().sorted().joinToString(prefix = "{", postfix = "}") {
+            JSONObject.quote(it) + ":" + canonical(value.get(it))
+        }
+        is JSONArray -> (0 until value.length()).joinToString(prefix = "[", postfix = "]") { canonical(value.get(it)) }
+        is String -> JSONObject.quote(value)
+        null, JSONObject.NULL -> "null"
+        else -> value.toString()
+    }
+    return java.security.MessageDigest.getInstance("SHA-256").digest(canonical(json).toByteArray())
+        .joinToString("") { "%02x".format(it) }
 }

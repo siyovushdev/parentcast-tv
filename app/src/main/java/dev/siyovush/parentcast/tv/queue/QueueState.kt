@@ -20,6 +20,10 @@ enum class PlaybackIntent {
     STOP,
 }
 
+data class BatchReceipt(val key: String, val fingerprint: String, val createdAtMs: Long)
+
+enum class BatchAddResult { APPLIED, REPLAY, CONFLICT, KEY_REUSED, STORAGE_ERROR, RECEIPT_LIMIT }
+
 data class QueueState(
     val items: List<QueueItem> = emptyList(),
     val currentIndex: Int = -1,
@@ -27,6 +31,7 @@ data class QueueState(
     val intent: PlaybackIntent = PlaybackIntent.STOP,
     val finished: Boolean = false,
     val version: Long = 0,
+    val batchReceipts: List<BatchReceipt> = emptyList(),
 ) {
     init {
         require(items.map(QueueItem::queueItemId).distinct().size == items.size)

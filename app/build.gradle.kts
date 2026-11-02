@@ -11,8 +11,8 @@ android {
         applicationId = "dev.siyovush.parentcast.tv"
         minSdk = 33
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.1.0-m1"
+        versionCode = 4
+        versionName = "0.1.0-m2"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

@@ -34,6 +34,12 @@ object QueueSnapshotCodec {
             .put("intent", state.intent.name)
             .put("finished", state.finished)
             .put("queueVersion", state.version)
+            .put("batchReceipts", JSONArray().apply {
+                state.batchReceipts.forEach { receipt ->
+                    put(JSONObject().put("key", receipt.key).put("fingerprint", receipt.fingerprint)
+                        .put("createdAtMs", receipt.createdAtMs))
+                }
+            })
             .toString()
     }
 
@@ -61,6 +67,12 @@ object QueueSnapshotCodec {
             intent = PlaybackIntent.valueOf(root.getString("intent")),
             finished = root.getBoolean("finished"),
             version = root.optLong("queueVersion", 0),
+            batchReceipts = root.optJSONArray("batchReceipts")?.let { receipts ->
+                List(receipts.length()) { index ->
+                    val receipt = receipts.getJSONObject(index)
+                    BatchReceipt(receipt.getString("key"), receipt.getString("fingerprint"), receipt.getLong("createdAtMs"))
+                }
+            } ?: emptyList(),
         )
     }
 }

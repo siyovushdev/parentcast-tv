@@ -24,6 +24,10 @@ import dev.siyovush.parentcast.tv.queue.AtomicQueueStore
 import dev.siyovush.parentcast.tv.queue.QueueItem
 import dev.siyovush.parentcast.tv.youtube.ytdlp.YtDlpYouTubeSource
 import dev.siyovush.parentcast.tv.youtube.YouTubeVideoIdParser
+import dev.siyovush.parentcast.tv.collections.AtomicCollectionStore
+import dev.siyovush.parentcast.tv.playlist.PlaylistPreviewManager
+import dev.siyovush.parentcast.tv.playlist.YtDlpPlaylistSource
+import dev.siyovush.parentcast.tv.web.PlaylistApi
 import dev.siyovush.parentcast.tv.web.ApiController
 import dev.siyovush.parentcast.tv.web.AtomicTokenStore
 import dev.siyovush.parentcast.tv.web.LocalAddressProvider
@@ -61,6 +65,7 @@ class MainActivity : Activity() {
     private lateinit var pairingManager: PairingManager
     private lateinit var tokenStore: AtomicTokenStore
     private var httpServer: ParentHttpServer? = null
+    private lateinit var playlistPreviews: PlaylistPreviewManager
     private lateinit var pinInput: EditText
     private lateinit var newPinInput: EditText
     private lateinit var savePinButton: Button
@@ -117,14 +122,21 @@ class MainActivity : Activity() {
         val addressProvider = LocalAddressProvider()
         tokenStore = AtomicTokenStore(File(filesDir, "device-tokens.json"))
         pairingManager = PairingManager(SharedPinSettings(this), tokenStore)
-        val apiController = ApiController(
+        playlistPreviews = PlaylistPreviewManager(YtDlpPlaylistSource(this))
+        val dispatcher = MainThreadDispatcher(handler)
+        lateinit var apiController: ApiController
+        val playlistApi = PlaylistApi(playlistPreviews,
+            AtomicCollectionStore(File(noBackupFilesDir, "saved-collections.json")),
+            coordinator, dispatcher, { apiController.stateBody() })
+        apiController = ApiController(
             pairingManager = pairingManager,
             tokenStore = tokenStore,
             idempotencyStore = AtomicIdempotencyStore(File(filesDir, "idempotency.json")),
             coordinator = coordinator,
-            dispatcher = MainThreadDispatcher(handler),
+            dispatcher = dispatcher,
             security = RequestSecurity(addressProvider.panelHosts(), PANEL_PORT),
             assetLoader = { path -> assets.open(path).bufferedReader().use { it.readText() } },
+            playlists = playlistApi,
         )
         try {
             httpServer = ParentHttpServer(PANEL_PORT, apiController).apply { start(5_000, true) }
@@ -193,6 +205,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         httpServer?.stop()
+        playlistPreviews.close()
         handler.removeCallbacks(savePosition)
         coordinator.savePosition()
         coordinator.close()

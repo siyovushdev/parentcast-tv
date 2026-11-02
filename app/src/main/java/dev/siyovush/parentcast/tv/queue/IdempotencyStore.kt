@@ -11,6 +11,7 @@ data class StoredResponse(
     val code: Int,
     val body: String,
     val createdAtMs: Long,
+    val requestFingerprint: String? = null,
 )
 
 interface IdempotencyStore {
@@ -56,6 +57,7 @@ class AtomicIdempotencyStore(
                             code = item.getInt("code"),
                             body = item.getString("body"),
                             createdAtMs = createdAt,
+                            requestFingerprint = item.optString("requestFingerprint").takeIf { it.isNotBlank() },
                         ),
                     )
                 }
@@ -71,7 +73,8 @@ class AtomicIdempotencyStore(
                 JSONObject()
                     .put("code", response.code)
                     .put("body", response.body)
-                    .put("createdAtMs", response.createdAtMs),
+                    .put("createdAtMs", response.createdAtMs)
+                    .put("requestFingerprint", response.requestFingerprint ?: JSONObject.NULL),
             )
         }
         val target = file.toPath().toAbsolutePath()
