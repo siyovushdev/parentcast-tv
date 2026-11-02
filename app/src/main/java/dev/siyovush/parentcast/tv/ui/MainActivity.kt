@@ -1,5 +1,6 @@
 package dev.siyovush.parentcast.tv.ui
 
+import android.app.AlertDialog
 import android.app.Activity
 import android.os.Bundle
 import android.os.Handler
@@ -8,6 +9,9 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.WindowManager
+import android.text.method.PasswordTransformationMethod
+import android.widget.CheckBox
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -17,6 +21,7 @@ import dev.siyovush.parentcast.tv.R
 import dev.siyovush.parentcast.tv.playback.CoordinatorSnapshot
 import dev.siyovush.parentcast.tv.playback.Media3PlaybackPlayer
 import dev.siyovush.parentcast.tv.playback.PlaybackCoordinator
+import dev.siyovush.parentcast.tv.playback.StartupPlaybackPolicy
 import dev.siyovush.parentcast.tv.playback.PlaybackErrorKind
 import dev.siyovush.parentcast.tv.playback.PlaybackStatus
 import dev.siyovush.parentcast.tv.queue.AtomicIdempotencyStore
@@ -41,12 +46,23 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import dev.siyovush.parentcast.tv.parent.ParentAccessGate
+import dev.siyovush.parentcast.tv.parent.ParentAccessResult
+import dev.siyovush.parentcast.tv.parent.SharedParentAttemptStore
+import dev.siyovush.parentcast.tv.parent.ParentModeSettings
+import dev.siyovush.parentcast.tv.kiosk.DeviceModeController
+import dev.siyovush.parentcast.tv.kiosk.ManagedLockTaskMode
+import dev.siyovush.parentcast.tv.parent.PrivilegedModeRequirements
+import dev.siyovush.parentcast.tv.parent.PrivilegedTrialSession
+import java.lang.ref.WeakReference
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class MainActivity : Activity() {
+open class MainActivity : Activity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var playerRoot: View
@@ -76,17 +92,49 @@ class MainActivity : Activity() {
     private var latestSnapshot = CoordinatorSnapshot()
     private var renderedQueue: Pair<List<QueueItem>, Int>? = null
     private var debugVisible = false
+    private lateinit var parentGate: ParentAccessGate
+    private lateinit var modeSettings: ParentModeSettings
+    private lateinit var deviceMode: DeviceModeController
+    private var parentDialog: AlertDialog? = null
+    private var foreground = false
+    private var retired = false
+    private var ownerReady = false
+    protected open val isPrivilegedKioskTask: Boolean = false
+    private var recoveryChecks = 0
+    private val privilegedRecoveryCheck = Runnable { checkPrivilegedRecovery() }
+    private var renderingMode = false
+    private var recoveryCaptureFailed = false
+    private var heldParentKey: Int? = null
+    private val parentHold = Runnable { heldParentKey = null; showParentPin() }
+
 
     private val savePosition = object : Runnable {
         override fun run() {
             coordinator.savePosition()
+            if (debugVisible && !parentGate.authorized()) showPlayer()
             handler.postDelayed(this, SAVE_INTERVAL_MS)
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Android gives a HOME alias a separate task even with a singleTask target activity.
+        // Transfer ownership on the main thread before opening the replacement player/server.
+        val previous = activeActivity?.get()?.takeIf { it !== this && !it.retired && it.ownerReady }
+        val liveTransfer = previous?.let { !it.isDestroyed && !it.isFinishing } == true
+        previous?.let {
+            it.retirePlaybackOwner()
+            it.finish()
+        }
+        activeActivity = WeakReference(this)
         window.setDecorFitsSystemWindows(false)
+        modeSettings = ParentModeSettings(this)
+        deviceMode = DeviceModeController(this)
+        try { deviceMode.captureOriginalLauncher() } catch (_: Exception) { recoveryCaptureFailed = true }
+        parentGate = ParentAccessGate(SharedPinSettings(this), SharedParentAttemptStore(this))
+        onBackInvokedDispatcher.registerOnBackInvokedCallback(
+            android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, ::handleParentBack)
+
 
         playerRoot = layoutInflater.inflate(R.layout.activity_player, null)
         debugRoot = layoutInflater.inflate(R.layout.activity_debug, null)
@@ -100,6 +148,10 @@ class MainActivity : Activity() {
         sessionStatus = debugRoot.findViewById(R.id.sessionStatus)
         pinInput = debugRoot.findViewById(R.id.pinInput)
         newPinInput = debugRoot.findViewById(R.id.newPinInput)
+        listOf(pinInput, newPinInput).forEach {
+            it.transformationMethod = PasswordTransformationMethod.getInstance()
+            it.isSaveEnabled = false
+        }
         savePinButton = debugRoot.findViewById(R.id.savePinButton)
         pairButton = debugRoot.findViewById(R.id.pairButton)
         pairStatus = debugRoot.findViewById(R.id.pairStatus)
@@ -114,6 +166,8 @@ class MainActivity : Activity() {
             store = AtomicQueueStore(File(filesDir, "queue-state.json")),
             player = playbackPlayer,
             scope = scope,
+            autoResumeOnStartup = if (liveTransfer) StartupPlaybackPolicy.resumeLiveOwner(previous!!.latestSnapshot)
+                else modeSettings.autoResumeAfterBoot,
             authorizationGate = {
                 !youTubeSession.isSupported || youTubeSession.isEnabled
             },
@@ -123,7 +177,13 @@ class MainActivity : Activity() {
         tokenStore = AtomicTokenStore(File(filesDir, "device-tokens.json"))
         pairingManager = PairingManager(SharedPinSettings(this), tokenStore)
         playlistPreviews = PlaylistPreviewManager(YtDlpPlaylistSource(this))
-        val dispatcher = MainThreadDispatcher(handler)
+        val dispatcher = object : dev.siyovush.parentcast.tv.web.CallDispatcher {
+            private val main = MainThreadDispatcher(handler)
+            override fun <T> call(block: () -> T): T = main.call {
+                check(!retired) { "Playback owner replaced" }
+                block()
+            }
+        }
         lateinit var apiController: ApiController
         val playlistApi = PlaylistApi(playlistPreviews,
             AtomicCollectionStore(File(noBackupFilesDir, "saved-collections.json")),
@@ -147,12 +207,13 @@ class MainActivity : Activity() {
         savePinButton.setOnClickListener { savePin() }
         pairButton.setOnClickListener { beginPairing() }
         renderPinUi()
+        configureParentModeControls()
 
         debugRoot.findViewById<Button>(R.id.addButton).setOnClickListener { addLink() }
-        debugRoot.findViewById<Button>(R.id.playButton).setOnClickListener { coordinator.play() }
-        debugRoot.findViewById<Button>(R.id.pauseButton).setOnClickListener { coordinator.pauseResume() }
-        debugRoot.findViewById<Button>(R.id.nextButton).setOnClickListener { coordinator.next() }
-        debugRoot.findViewById<Button>(R.id.stopButton).setOnClickListener { coordinator.stop() }
+        debugRoot.findViewById<Button>(R.id.playButton).setOnClickListener { if (requireParent()) { showPlayer(); coordinator.play() } }
+        debugRoot.findViewById<Button>(R.id.pauseButton).setOnClickListener { if (requireParent()) coordinator.pauseResume() }
+        debugRoot.findViewById<Button>(R.id.nextButton).setOnClickListener { if (requireParent()) coordinator.next() }
+        debugRoot.findViewById<Button>(R.id.stopButton).setOnClickListener { if (requireParent()) coordinator.stop() }
         debugRoot.findViewById<Button>(R.id.backButton).setOnClickListener { showPlayer() }
         val sessionVisibility = if (youTubeSession.isSupported) View.VISIBLE else View.GONE
         listOf(
@@ -173,48 +234,109 @@ class MainActivity : Activity() {
             controller.systemBarsBehavior =
                 WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
+        ownerReady = true
         coordinator.setListener(::render)
         coordinator.start()
         handler.postDelayed(savePosition, SAVE_INTERVAL_MS)
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if (!debugVisible && (keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_SETTINGS)) {
-            showDebug()
-            return true
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (retired) return true
+        if (debugVisible && !parentGate.authorized()) { showPlayer(); return true }
+        if (!debugVisible && parentDialog == null) {
+            if (event.keyCode in setOf(KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_DPAD_CENTER)) {
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    if (event.isLongPress) {
+                        handler.removeCallbacks(parentHold); heldParentKey = null; showParentPin()
+                    } else if (event.repeatCount == 0) {
+                        heldParentKey = event.keyCode; handler.postDelayed(parentHold, 3000)
+                    }
+                } else if (event.action == KeyEvent.ACTION_UP && heldParentKey == event.keyCode) {
+                    heldParentKey = null; handler.removeCallbacks(parentHold)
+                }
+                return true
+            }
+            if (event.keyCode in setOf(KeyEvent.KEYCODE_SETTINGS, KeyEvent.KEYCODE_SEARCH,
+                    KeyEvent.KEYCODE_ASSIST, KeyEvent.KEYCODE_VOICE_ASSIST, KeyEvent.KEYCODE_ALL_APPS,
+                    KeyEvent.KEYCODE_APP_SWITCH)) return true
+            if (event.keyCode == KeyEvent.KEYCODE_P && event.isCtrlPressed && event.isAltPressed) {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) showParentPin()
+                return true
+            }
         }
-        if (!debugVisible && keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
-            if (event.isLongPress) showDebug()
-            return true
-        }
-        return super.onKeyDown(keyCode, event)
+        return super.dispatchKeyEvent(event)
     }
 
-    override fun onBackPressed() {
-        if (debugVisible) {
-            showPlayer()
-        } else {
-            super.onBackPressed()
-        }
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        if (!retired && debugVisible) parentGate.touch()
     }
+
+    override fun onResume() {
+        super.onResume()
+        if (retired) return
+        foreground = true
+        if (!isPrivilegedKioskTask && checkPrivilegedRecovery()) return
+        if (::deviceMode.isInitialized && modeSettings.childEnabled && !isPrivilegedKioskTask) {
+            val snapshot = deviceMode.snapshot()
+            if (snapshot.isDefaultHome && snapshot.recoveryAvailable && !parentGate.authorized()) deviceMode.startChildLockTask()
+        }
+        if (::debugRoot.isInitialized && debugVisible) renderModeUi()
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        if (retired) return
+        parentDialog?.dismiss()
+        showPlayer()
+    }
+
+    private fun handleParentBack() {
+        if (parentDialog != null) parentDialog?.dismiss() else if (debugVisible) showPlayer()
+        // Leaving the player requires the authenticated Launcher exit, including when HOME is off.
+    }
+
+    override fun onBackPressed() { handleParentBack() }
 
     override fun onPause() {
+        if (retired) { super.onPause(); return }
+        foreground = false
+        handler.removeCallbacks(parentHold)
+        handler.removeCallbacks(privilegedRecoveryCheck)
+        recoveryChecks = 0
+        heldParentKey = null
+        parentGate.lock()
+        parentDialog?.dismiss()
+        if (debugVisible) showPlayer()
         coordinator.savePosition()
         super.onPause()
     }
 
-    override fun onDestroy() {
+    private fun retirePlaybackOwner() {
+        if (retired) return
+        retired = true
+        ownerReady = false
+        foreground = false
+        parentGate.lock()
+        parentDialog?.dismiss()
+        handler.removeCallbacksAndMessages(null)
         httpServer?.stop()
         playlistPreviews.close()
-        handler.removeCallbacks(savePosition)
-        coordinator.savePosition()
-        coordinator.close()
-        playbackPlayer.release()
-        scope.cancel()
+        try { coordinator.savePosition() } finally {
+            coordinator.close()
+            playbackPlayer.release()
+            scope.cancel()
+        }
+    }
+
+    override fun onDestroy() {
+        if (!retired) retirePlaybackOwner()
+        if (activeActivity?.get() === this) activeActivity = null
         super.onDestroy()
     }
 
     private fun addLink() {
+        if (!requireParent()) return
         try {
             val videoId = YouTubeVideoIdParser.parse(linkInput.text.toString())
             coordinator.add(videoId)
@@ -226,6 +348,7 @@ class MainActivity : Activity() {
     }
 
     private fun importSession() {
+        if (!requireParent()) return
         try {
             val count = youTubeSession.importFromPrivateFile()
             coordinator.onSessionChanged()
@@ -237,6 +360,7 @@ class MainActivity : Activity() {
     }
 
     private fun disableSession() {
+        if (!requireParent()) return
         coordinator.stop()
         try {
             youTubeSession.disableAndDelete()
@@ -258,6 +382,7 @@ class MainActivity : Activity() {
     }
 
     private fun savePin() {
+        if (!requireParent()) return
         val hasPin = pairingManager.hasPin()
         val currentPin = if (hasPin) pinInput.text.toString() else null
         val newPin = if (hasPin) newPinInput.text.toString() else pinInput.text.toString()
@@ -276,6 +401,7 @@ class MainActivity : Activity() {
     }
 
     private fun beginPairing() {
+        if (!requireParent()) return
         val challenge = pairingManager.beginPairing(pinInput.text.toString())
         if (challenge == null) {
             pairStatus.setText(R.string.debug_pin_required)
@@ -311,8 +437,7 @@ class MainActivity : Activity() {
             devicesContainer.addView(Button(this).apply {
                 text = getString(R.string.debug_revoke, device.label)
                 setOnClickListener {
-                    tokenStore.revoke(device.deviceId)
-                    renderDevices()
+                    if (requireParent()) { tokenStore.revoke(device.deviceId); renderDevices() }
                 }
             })
         }
@@ -322,14 +447,220 @@ class MainActivity : Activity() {
         if (host.contains(':')) "http://[$host]:$PANEL_PORT" else "http://$host:$PANEL_PORT"
     }
 
+    private fun requireParent(): Boolean {
+        if (!retired && debugVisible && parentGate.touch()) return true
+        showPlayer()
+        return false
+    }
+
+    private fun showParentPin() {
+        if (!foreground || parentDialog != null) return
+        parentGate.lock()
+        val content = layoutInflater.inflate(R.layout.dialog_parent_pin, null)
+        val input = content.findViewById<EditText>(R.id.pinGateInput)
+        val confirmation = content.findViewById<EditText>(R.id.pinGateConfirm)
+        val message = content.findViewById<TextView>(R.id.pinGateMessage)
+        input.transformationMethod = PasswordTransformationMethod.getInstance()
+        confirmation.transformationMethod = PasswordTransformationMethod.getInstance()
+        val setup = !pairingManager.hasPin()
+        confirmation.visibility = if (setup) View.VISIBLE else View.GONE
+        var accepted = false
+        val dialog = AlertDialog.Builder(this).setTitle(if (setup) "Создать родительский PIN" else "Вход родителя")
+            .setView(content).setPositiveButton(if (setup) "Создать" else "Войти", null)
+            .setNegativeButton("Отмена", null).create()
+        parentDialog = dialog
+        dialog.setOnDismissListener {
+            input.text.clear(); confirmation.text.clear()
+            if (!accepted) parentGate.lock()
+            parentDialog = null
+        }
+        dialog.show()
+        dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val pin = input.text.toString()
+            val confirm = confirmation.text.toString()
+            input.text.clear(); confirmation.text.clear()
+            if (setup && (!PinSecurity.isValidPin(pin) || pin != confirm)) {
+                message.text = "Нужны совпадающие PIN из 6–12 цифр."; return@setOnClickListener
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+            message.text = "Проверка…"
+            scope.launch {
+                val result = withContext(Dispatchers.Default) {
+                    if (setup && !pairingManager.createPin(pin)) ParentAccessResult.DENIED
+                    else parentGate.authenticate(pin)
+                }
+                if (parentDialog !== dialog || !foreground) return@launch
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+                if (result == ParentAccessResult.GRANTED && parentGate.authorized()) {
+                    accepted = true
+                    dialog.dismiss()
+                    showDebug()
+                } else {
+                    message.text = when (result) {
+                        ParentAccessResult.THROTTLED -> "Лимит попыток. Повторите позже (до 10 минут)."
+                        ParentAccessResult.STORAGE_ERROR -> "Ошибка сохранения защиты; вход закрыт."
+                        else -> "PIN не принят."
+                    }
+                }
+            }
+        }
+    }
+
+    private fun configureParentModeControls() {
+        debugRoot.findViewById<Button>(R.id.selectHomeButton).setOnClickListener {
+            if (!requireParent()) return@setOnClickListener
+            if (isPrivilegedKioskTask) { debugStatus.text = "Сначала завершите системный kiosk по PIN."; return@setOnClickListener }
+            modeAction { deviceMode.requestHomeSelection() }
+        }
+        debugRoot.findViewById<Button>(R.id.childModeButton).setOnClickListener {
+            if (requireParent()) onParentChildModeToggle()
+        }
+        debugRoot.findViewById<Button>(R.id.restoreLauncherButton).setOnClickListener {
+            if (requireParent()) onParentRestoreLauncher()
+        }
+        debugRoot.findViewById<Button>(R.id.privilegedTrialButton).setOnClickListener {
+            if (!requireParent() || isPrivilegedKioskTask) return@setOnClickListener
+            val requirements = currentPrivilegedRequirements()
+            val mode = currentDeviceMode().lockTaskMode
+            if (!requirements.isSystemApp || !privilegedCandidateDeclared()) {
+                debugStatus.text = "Системная установка не подтверждена. Пробный kiosk не запущен."; return@setOnClickListener
+            }
+            if (!privilegedTrial.authorizeEntry(parentGate.authorized(), requirements, mode)) {
+                debugStatus.text = "Нет условий для безопасного системного сеанса."; return@setOnClickListener
+            }
+            showPlayer()
+            try {
+                startActivity(android.content.Intent().setComponent(android.content.ComponentName(packageName,
+                    "dev.siyovush.parentcast.tv.ui.PrivilegedKioskActivity"))
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK))
+            } catch (_: Exception) {
+                privilegedTrial.clearEntry()
+                android.widget.Toast.makeText(this,
+                    "Системный kiosk не запущен. Повторите вход родителя для проверки.",
+                    android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+        debugRoot.findViewById<CheckBox>(R.id.autoResumeAfterBoot).setOnCheckedChangeListener { _, checked ->
+            if (!renderingMode && requireParent()) {
+                try { modeSettings.autoResumeAfterBoot = checked }
+                catch (_: Exception) { debugStatus.text = "Не удалось сохранить автопродолжение."; renderModeUi(); return@setOnCheckedChangeListener }
+                debugStatus.text = "Автопродолжение сохранённого PLAY при следующем запуске: " + if (checked) "включено" else "выключено (восстановится PAUSE)"
+            }
+        }
+    }
+
+    protected open fun onParentChildModeToggle() {
+        val snapshot = deviceMode.snapshot()
+        if (!snapshot.recoveryAvailable || !snapshot.isDefaultHome) {
+            debugStatus.text = "Сначала проверьте возврат Launcher и выберите ParentCast HOME."; return
+        }
+        if (!persistChildMode(!modeSettings.childEnabled)) return
+        if (modeSettings.childEnabled) {
+            val result = deviceMode.startChildLockTask()
+            renderModeUi()
+            debugStatus.text = result.message
+            showPlayer()
+        } else modeAction { deviceMode.stopChildLockTask() }
+    }
+
+    protected open fun onParentRestoreLauncher() {
+        if (!disarmChildAndStop()) return
+        val result = deviceMode.restoreOriginalLauncher()
+        if (!result.success) { debugStatus.text = result.message; renderModeUi() }
+    }
+
+    protected fun disarmChildAndStop(): Boolean {
+        if (!persistChildMode(false)) return false
+        try { coordinator.stop() } catch (_: Exception) {
+            debugStatus.text = "Не удалось сохранить STOP; выход пока не подтверждён."; return false
+        }
+        return true
+    }
+
+    protected fun currentDeviceMode() = deviceMode.snapshot()
+
+    protected fun currentPrivilegedRequirements(): PrivilegedModeRequirements {
+        val snapshot = currentDeviceMode()
+        return PrivilegedModeRequirements(
+            isSystemApp = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0,
+            pinConfigured = pairingManager.hasPin(), recoveryAvailable = snapshot.recoveryAvailable,
+            isParentCastHome = snapshot.isDefaultHome, isForeground = foreground,
+        )
+    }
+
+    private fun privilegedCandidateDeclared(): Boolean = try {
+        packageManager.getActivityInfo(android.content.ComponentName(packageName,
+            "dev.siyovush.parentcast.tv.ui.PrivilegedKioskActivity"), 0)
+        true
+    } catch (_: android.content.pm.PackageManager.NameNotFoundException) { false }
+
+    private fun checkPrivilegedRecovery(): Boolean {
+        if (isPrivilegedKioskTask || !privilegedTrial.hasPendingRecovery()) return false
+        if (privilegedTrial.consumeRecovery(currentDeviceMode().lockTaskMode, foreground)) {
+            recoveryChecks = 0
+            onParentRestoreLauncher()
+        } else if (foreground && ++recoveryChecks < 30) {
+            handler.postDelayed(privilegedRecoveryCheck, 100)
+        }
+        return true
+    }
+
+    private fun persistChildMode(enabled: Boolean): Boolean = try {
+        modeSettings.childEnabled = enabled
+        true
+    } catch (_: Exception) {
+        debugStatus.text = "Не удалось сохранить режим. Переключение не выполнено."
+        false
+    }
+
+    private fun modeAction(action: () -> dev.siyovush.parentcast.tv.kiosk.ModeResult) {
+        try { debugStatus.text = action().message } catch (_: Exception) { debugStatus.text = "Android отклонил изменение режима." }
+        renderModeUi()
+    }
+
+    private fun renderModeUi() {
+        val snapshot = deviceMode.snapshot()
+        debugRoot.findViewById<TextView>(R.id.modeStatus).text = buildString {
+            if (recoveryCaptureFailed) append("Не удалось сохранить возврат Launcher. Изменение HOME пока запрещено.\n")
+            append("HOME: ").append(if (snapshot.isDefaultHome) "ParentCast" else snapshot.homeResolver ?: "не выбран")
+            append("\nВозврат: ").append(snapshot.originalLauncher ?: "не сохранён")
+            append("\nДетский просмотр: ").append(if (modeSettings.childEnabled) "включён" else "выключен")
+            append("\n")
+            append(when (snapshot.lockTaskMode) {
+                ManagedLockTaskMode.LOCKED -> "Настоящий Lock Task подтверждён Android."
+                ManagedLockTaskMode.PINNED -> "Screen pinning — не полноценная блокировка."
+                ManagedLockTaskMode.NONE -> if (snapshot.lockTaskPermitted || snapshot.ownDeviceOwner) "Lock Task разрешён DPC, пока не активен."
+                    else "LOCKED сейчас не подтверждён: системные пути выхода остаются. HOME + PIN защищают только интерфейс ParentCast."
+            })
+        }
+        debugRoot.findViewById<Button>(R.id.privilegedTrialButton).apply {
+            visibility = if (!isPrivilegedKioskTask && privilegedCandidateDeclared()) View.VISIBLE else View.GONE
+            isEnabled = currentPrivilegedRequirements().isSystemApp
+        }
+        debugRoot.findViewById<Button>(R.id.selectHomeButton).isEnabled = !isPrivilegedKioskTask
+        debugRoot.findViewById<Button>(R.id.childModeButton).text = if (isPrivilegedKioskTask) "Завершить системный kiosk" else if (modeSettings.childEnabled) "Выключить детский просмотр" else "Включить детский просмотр (HOME + PIN)"
+        renderingMode = true
+        debugRoot.findViewById<CheckBox>(R.id.autoResumeAfterBoot).isChecked = modeSettings.autoResumeAfterBoot
+        renderingMode = false
+    }
+
     private fun showDebug() {
+        if (!parentGate.authorized()) return
         debugVisible = true
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         setContentView(debugRoot)
         renderPinUi()
+        renderModeUi()
         render(latestSnapshot)
     }
 
     private fun showPlayer() {
+        parentGate.lock()
+        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        pinInput.text.clear()
+        newPinInput.text.clear()
+        pairStatus.setText(R.string.debug_pair_status)
         debugVisible = false
         setContentView(playerRoot)
         render(latestSnapshot)
@@ -337,10 +668,6 @@ class MainActivity : Activity() {
 
     private fun render(snapshot: CoordinatorSnapshot) {
         latestSnapshot = snapshot
-        if (debugVisible && (snapshot.status == PlaybackStatus.LOADING || snapshot.status == PlaybackStatus.BUFFERING)) {
-            showPlayer()
-            return
-        }
         val playerMessage = when (snapshot.status) {
             PlaybackStatus.IDLE -> getString(R.string.player_waiting)
             PlaybackStatus.WAITING_FOR_SESSION -> getString(R.string.player_waiting_session)
@@ -392,7 +719,7 @@ class MainActivity : Activity() {
             if (index > snapshot.queueState.currentIndex) {
                 queueContainer.addView(Button(this).apply {
                     text = getString(R.string.debug_delete, index + 1, item.videoId)
-                    setOnClickListener { coordinator.deletePending(item.queueItemId) }
+                    setOnClickListener { if (requireParent()) coordinator.deletePending(item.queueItemId) }
                 })
             } else {
                 queueContainer.addView(TextView(this).apply {
@@ -432,6 +759,8 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        internal val privilegedTrial = PrivilegedTrialSession(android.os.SystemClock::elapsedRealtime)
+        private var activeActivity: WeakReference<MainActivity>? = null
         private const val SAVE_INTERVAL_MS = 5_000L
         private const val PANEL_PORT = 8765
     }

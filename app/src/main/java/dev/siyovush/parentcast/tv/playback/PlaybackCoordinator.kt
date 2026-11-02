@@ -25,6 +25,7 @@ class PlaybackCoordinator(
     private val scope: CoroutineScope,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val authorizationGate: () -> Boolean = { true },
+    private val autoResumeOnStartup: Boolean = true,
 ) : PlaybackPlayer.Listener {
     private var state = QueueState.Empty
     private var status = PlaybackStatus.IDLE
@@ -32,6 +33,7 @@ class PlaybackCoordinator(
     private var diagnostics = ""
     private var error: PlaybackFailure? = null
     private var storageWarning = false
+    private var startupStorageBlocked = false
     private var generation = 0L
     private var extractionJob: Job? = null
     private var preparedItemId: String? = null
@@ -59,6 +61,21 @@ class PlaybackCoordinator(
         if (started || closed) return
         started = true
         player.setListener(this)
+        val startupState = StartupPlaybackPolicy.restore(state, autoResumeOnStartup)
+        if (startupState != state) {
+            try {
+                // Commit the safe intent before any extraction can be scheduled.
+                store.write(startupState)
+            } catch (_: Exception) {
+                state = startupState
+                storageWarning = true
+                startupStorageBlocked = true
+                status = PlaybackStatus.PAUSED
+                emit()
+                return
+            }
+            state = startupState
+        }
         if (state.finished) {
             status = PlaybackStatus.ENDED
         } else if (state.currentItem != null) {
@@ -142,7 +159,7 @@ class PlaybackCoordinator(
     }
 
     fun onSessionChanged() {
-        if (closed) return
+        if (closed || startupStorageBlocked) return
         if (!authorizationGate()) {
             if (state.intent != PlaybackIntent.STOP && !state.finished) {
                 status = PlaybackStatus.WAITING_FOR_SESSION
@@ -415,6 +432,7 @@ class PlaybackCoordinator(
     private fun persist() {
         state = state.copy(version = state.version + 1)
         store.write(state)
+        startupStorageBlocked = false
     }
 
     private fun emit() {

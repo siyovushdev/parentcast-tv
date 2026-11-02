@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="vertical" android:padding="24dp">
+    <EditText android:id="@+id/pinGateInput" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:hint="Родительский PIN"
+        android:inputType="numberPassword" android:maxLength="12" android:importantForAutofill="no"
+        android:saveEnabled="false" android:imeOptions="flagNoExtractUi" />
+    <EditText android:id="@+id/pinGateConfirm" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:hint="Повторите новый PIN"
+        android:inputType="numberPassword" android:maxLength="12" android:importantForAutofill="no"
+        android:saveEnabled="false" android:visibility="gone" />
+    <TextView android:id="@+id/pinGateMessage" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:paddingTop="8dp" />
+</LinearLayout>

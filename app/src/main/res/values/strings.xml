@@ -9,7 +9,7 @@
     <string name="player_stopped">Просмотр остановлен</string>
     <string name="player_ended">Выбранная очередь завершена</string>
     <string name="player_error">Видео недоступно. Подробности — на родительском debug-экране.</string>
-    <string name="debug_title">ParentCast TV — DEBUG M2</string>
+    <string name="debug_title">ParentCast TV — настройки родителя M3</string>
     <string name="debug_warning">Прототип для родителя. Это не защищённый детский режим.</string>
     <string name="debug_link_hint">https://www.youtube.com/watch?v=… или https://youtu.be/…</string>
     <string name="debug_add">Добавить в конец</string>

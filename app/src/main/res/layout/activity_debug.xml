@@ -27,6 +27,21 @@
             android:textColor="#FDD663"
             android:textSize="18sp" />
 
+        <TextView android:id="@+id/modeStatus" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:textColor="#FDD663" android:textSize="18sp" />
+        <CheckBox android:id="@+id/autoResumeAfterBoot" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="Автопродолжение сохранённого PLAY при запуске"
+            android:textColor="#FFFFFF" />
+        <Button android:id="@+id/selectHomeButton" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="Выбрать ParentCast как HOME" />
+        <Button android:id="@+id/childModeButton" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="Включить детский просмотр" />
+        <Button android:id="@+id/privilegedTrialButton" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="Проверить системный kiosk — один сеанс"
+            android:visibility="gone" />
+        <Button android:id="@+id/restoreLauncherButton" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:text="Вернуть штатный Launcher и отключить HOME" />
+
         <TextView
             android:id="@+id/panelStatus"
             android:layout_width="match_parent"

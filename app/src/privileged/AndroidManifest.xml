@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Manual first trial only. Never HOME/LAUNCHER, never exported, no shared system UID. -->
+        <activity android:name=".ui.PrivilegedKioskActivity"
+            android:exported="false" android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}.privilegedkiosk"
+            android:excludeFromRecents="true" android:lockTaskMode="always"
+            android:configChanges="keyboardHidden|orientation|screenSize"
+            android:screenOrientation="landscape" />
+    </application>
+</manifest>
