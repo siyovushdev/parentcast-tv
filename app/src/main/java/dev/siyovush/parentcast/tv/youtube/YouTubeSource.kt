@@ -30,14 +30,16 @@ internal fun Throwable?.safeDiagnostic(): String {
     if (this == null) return ""
     val urlPattern = Regex("https?://\\S+")
     val sensitivePattern = Regex(
-        "(?i)(cookie|authorization|access_token|refresh_token|visitorData|poToken|pot|token|signature|sap|sig|expire)=[^\\s&]+",
+        "(?i)(cookie|authorization|access_token|refresh_token|visitorData|poToken|pot|token|signature|sap|sig|expire|sapisid|apisid|hsid|ssid|sid|__secure-1psid|__secure-3psid|__secure-1psidts|__secure-3psidts)=[^\\s&]+",
     )
+    val bearerPattern = Regex("(?i)bearer\\s+\\S+")
     return generateSequence(this) { it.cause }
         .take(6)
         .joinToString(" <- ") { error ->
             val message = error.message.orEmpty()
                 .replace(urlPattern, "<URL>")
                 .replace(sensitivePattern, "$1=<redacted>")
+                .replace(bearerPattern, "Bearer <redacted>")
                 .replace(Regex("\\s+"), " ")
                 .trim()
                 .take(300)

@@ -8,7 +8,8 @@ class SafeDiagnosticTest {
     @Test
     fun redactsSignedUrlsAndSensitiveParameters() {
         val error = IllegalStateException(
-            "Failed https://googlevideo.example/videoplayback?expire=123&sig=secret token=private",
+            "Failed https://googlevideo.example/videoplayback?expire=123&sig=secret " +
+                "token=private SAPISID=secret-sid Authorization=auth-value Bearer bearer-secret",
         )
 
         val diagnostic = error.safeDiagnostic()
@@ -16,8 +17,11 @@ class SafeDiagnosticTest {
         assertFalse(diagnostic.contains("googlevideo"))
         assertFalse(diagnostic.contains("secret"))
         assertFalse(diagnostic.contains("private"))
+        assertFalse(diagnostic.contains("auth-value"))
         assertTrue(diagnostic.contains("<URL>"))
         assertTrue(diagnostic.contains("token=<redacted>"))
+        assertTrue(diagnostic.contains("SAPISID=<redacted>"))
+        assertTrue(diagnostic.contains("Bearer <redacted>"))
     }
 
     @Test

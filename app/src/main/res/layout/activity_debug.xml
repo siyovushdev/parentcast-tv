@@ -83,6 +83,29 @@
         </LinearLayout>
 
         <TextView
+            android:id="@+id/sessionStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/debug_session_disabled"
+            android:textColor="#FDD663"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/importSessionButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/debug_session_import" />
+
+        <Button
+            android:id="@+id/disableSessionButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/debug_session_disable" />
+
+        <TextView
             android:id="@+id/debugStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

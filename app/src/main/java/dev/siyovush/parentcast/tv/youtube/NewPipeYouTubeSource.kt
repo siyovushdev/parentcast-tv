@@ -17,9 +17,11 @@ import org.schabi.newpipe.extractor.stream.VideoStream
 import java.io.IOException
 import java.net.URI
 
-class NewPipeYouTubeSource : YouTubeSource {
+class NewPipeYouTubeSource(
+    private val session: YouTubeSession = DisabledYouTubeSession,
+) : YouTubeSource {
     init {
-        ensureInitialized()
+        ensureInitialized(session)
     }
 
     override suspend fun resolve(videoId: String): ResolvedVideo {
@@ -158,11 +160,11 @@ class NewPipeYouTubeSource : YouTubeSource {
         @Volatile
         private var initialized = false
 
-        private fun ensureInitialized() {
+        private fun ensureInitialized(session: YouTubeSession) {
             if (initialized) return
             synchronized(initializationLock) {
                 if (!initialized) {
-                    NewPipe.init(OkHttpDownloader())
+                    NewPipe.init(OkHttpDownloader(session))
                     initialized = true
                 }
             }
