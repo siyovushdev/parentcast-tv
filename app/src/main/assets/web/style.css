@@ -35,7 +35,24 @@ button.danger { background: #f2b8b5; }
 .queue-item .controls { display: flex; gap: 6px; flex-wrap: wrap; }
 .queue-item .controls button { min-height: 38px; padding: 6px 10px; font-size: .9rem; }
 .device { display: flex; justify-content: space-between; gap: 12px; align-items: center; border-top: 1px solid #33404d; padding: 10px 0; }
+.controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.playlist-entries { margin: 12px 0; max-height: 480px; overflow-y: auto; overscroll-behavior: contain; }
+.playlist-entry { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: start; border-top: 1px solid #33404d; padding: 12px 4px; margin: 0; cursor: pointer; }
+.playlist-entry input { width: 24px; height: 24px; margin: 2px 0; accent-color: #8ab4f8; }
+.playlist-entry strong, .entry-meta { display: block; overflow-wrap: anywhere; }
+.entry-meta { margin-top: 5px; line-height: 1.5; }
+.saved-collection { border-top: 1px solid #33404d; padding: 12px 0; }
+.saved-collection h3 { margin: 0 0 10px; overflow-wrap: anywhere; }
+.saved-collection details { margin-bottom: 12px; }
+.saved-collection summary { cursor: pointer; padding: 6px 0; }
+.saved-collection ol { max-height: 200px; overflow-y: auto; overflow-wrap: anywhere; }
+#playlistTitle { overflow-wrap: anywhere; }
+#playlistMessage, #collectionsMessage { overflow-wrap: anywhere; }
 [hidden] { display: none !important; }
+@media (max-width: 600px) {
+    .queue-item { grid-template-columns: minmax(0, 1fr); }
+    .controls > button { flex: 1 1 auto; }
+}
 @media (min-width: 700px) {
     .actions { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }

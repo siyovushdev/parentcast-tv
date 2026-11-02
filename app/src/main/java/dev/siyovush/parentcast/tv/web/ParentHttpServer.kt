@@ -8,14 +8,15 @@ internal class ParentHttpServer(
     private val controller: ApiController,
 ) : NanoHTTPD("0.0.0.0", port) {
     override fun serve(session: IHTTPSession): Response {
+        val tooLarge = session.headers["content-length"]?.toLongOrNull()?.let { it < 0 || it > 65_536 } == true
         val request = ApiRequest(
             method = session.method.name,
             path = session.uri,
             headers = session.headers.mapKeys { it.key.lowercase() },
-            body = readBody(session),
+            body = if (tooLarge) "" else readBody(session),
             clientKey = session.remoteIpAddress,
         )
-        val apiResponse = controller.handle(request)
+        val apiResponse = if (tooLarge) ApiResponse(413, "{\"error\":\"BODY_TOO_LARGE\"}") else controller.handle(request)
         return newFixedLengthResponse(
             responseStatus(apiResponse.code),
             apiResponse.contentType,
@@ -34,6 +35,11 @@ internal class ParentHttpServer(
     }
 
     private fun readBody(session: IHTTPSession): String = try {
+        // JSON uses UTF-8; NanoHTTPD 2.3.1 otherwise defaults missing charset to US-ASCII.
+        // Keep its HTTP/body parser and only supply the JSON encoding it should use.
+        if (session.headers["content-type"]?.substringBefore(';')?.trim()?.equals("application/json", true) == true) {
+            session.headers["content-type"] = "application/json; charset=utf-8"
+        }
         val body = mutableMapOf<String, String>()
         session.parseBody(body)
         body["postData"].orEmpty()

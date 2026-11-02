@@ -1,5 +1,7 @@
 package dev.siyovush.parentcast.tv.playback
 
+import dev.siyovush.parentcast.tv.queue.BatchAddResult
+import dev.siyovush.parentcast.tv.queue.BatchReceipt
 import dev.siyovush.parentcast.tv.queue.PlaybackIntent
 import dev.siyovush.parentcast.tv.queue.QueueItem
 import dev.siyovush.parentcast.tv.queue.QueueState
@@ -75,6 +77,47 @@ class PlaybackCoordinator(
         error = null
         persist()
         emit()
+    }
+
+    fun batchReplay(commandKey: String, fingerprint: String): BatchAddResult? {
+        val receipt = state.batchReceipts.find { it.key == commandKey && System.currentTimeMillis() - it.createdAtMs <= 86_400_000L }
+            ?: return null
+        return if (receipt.fingerprint == fingerprint) BatchAddResult.REPLAY else BatchAddResult.KEY_REUSED
+    }
+
+    /** One queue transaction; no player calls and no change of playback intent. */
+    fun addBatch(videoIds: List<String>, expectedVersion: Long, commandKey: String, requestFingerprint: String? = null): BatchAddResult {
+        require(videoIds.size in 1..500 && videoIds.all { Regex("[A-Za-z0-9_-]{11}").matches(it) })
+        require(commandKey.length in 8..300)
+        if (closed) return BatchAddResult.STORAGE_ERROR
+        val fingerprint = requestFingerprint ?: java.security.MessageDigest.getInstance("SHA-256")
+            .digest((expectedVersion.toString() + "|" + videoIds.joinToString(",")).toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val now = System.currentTimeMillis()
+        val receipts = state.batchReceipts.filter { now - it.createdAtMs <= 86_400_000L }
+        receipts.find { it.key == commandKey }?.let {
+            return if (it.fingerprint == fingerprint) BatchAddResult.REPLAY else BatchAddResult.KEY_REUSED
+        }
+        if (state.version != expectedVersion) return BatchAddResult.CONFLICT
+        if (receipts.size >= 1000) return BatchAddResult.RECEIPT_LIMIT
+        val items = videoIds.map { QueueItem(UUID.randomUUID().toString(), it) }
+        val updated = state.copy(
+            items = state.items + items,
+            currentIndex = if (state.items.isEmpty()) 0 else state.currentIndex,
+            version = state.version + 1,
+            batchReceipts = receipts + BatchReceipt(commandKey, fingerprint, now),
+        )
+        try {
+            store.write(updated)
+        } catch (_: Exception) {
+            storageWarning = true
+            emit()
+            return BatchAddResult.STORAGE_ERROR
+        }
+        state = updated
+        if (status == PlaybackStatus.IDLE) status = PlaybackStatus.STOPPED
+        emit()
+        return BatchAddResult.APPLIED
     }
 
     fun play() {

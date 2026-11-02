@@ -67,6 +67,44 @@
             <div id="queue"></div>
         </section>
 
+        <section class="card" aria-labelledby="playlistHeading">
+            <h2 id="playlistHeading">Импорт YouTube-плейлиста</h2>
+            <p class="muted">Публичный статический плейлист, до 500 элементов. Предпросмотр и выбор не меняют очередь. Добавление не запускает воспроизведение.</p>
+            <label>Ссылка на плейлист <input id="playlistUrl" type="url" autocomplete="off" maxlength="2048" placeholder="https://www.youtube.com/playlist?list=…"></label>
+            <div class="controls">
+                <button id="playlistPreviewButton">Получить предпросмотр</button>
+                <button id="playlistCancelButton" class="secondary" hidden>Отменить предпросмотр</button>
+            </div>
+            <p id="playlistMessage" class="message" role="status" aria-live="polite"></p>
+            <div id="playlistPreview" hidden>
+                <h3 id="playlistTitle"></h3>
+                <p id="playlistCount" class="muted"></p>
+                <div id="playlistSelection" class="controls" hidden>
+                    <button id="playlistSelectAllButton" class="secondary">Выбрать все доступные</button>
+                    <button id="playlistSelectNoneButton" class="secondary">Снять выбор</button>
+                    <span id="playlistSelectedCount" class="muted"></span>
+                </div>
+                <p class="muted small">«Доступность не проверена» означает, что список YouTube содержит ролик, но возможность воспроизведения пока не подтверждена. Эфиры, премьеры и ограниченный доступ не поддерживаются.</p>
+                <div id="playlistEntries" class="playlist-entries"></div>
+                <div id="playlistConfirm" hidden>
+                    <p id="playlistPartialNotice" class="error" hidden>PARTIAL: получена только часть плейлиста. Будут добавлены или сохранены только отмеченные элементы из полученной части.</p>
+                    <button id="playlistApplyButton" disabled>Добавить выбранные</button>
+                    <label>Название сохранённой подборки <input id="collectionName" autocomplete="off" maxlength="100" placeholder="Например, вечерняя программа"></label>
+                    <button id="collectionSaveButton" class="secondary" disabled>Сохранить выбранные как подборку</button>
+                    <p class="muted small">Сохраняется фиксированный список videoId в указанном порядке на приставке. Новые видео автора не добавятся. Сохранение не меняет очередь.</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="card" aria-labelledby="collectionsHeading">
+            <div class="row">
+                <h2 id="collectionsHeading">Сохранённые подборки</h2>
+                <button id="collectionsRefreshButton" class="secondary">Обновить</button>
+            </div>
+            <p id="collectionsMessage" class="message" role="status" aria-live="polite"></p>
+            <div id="collections"></div>
+        </section>
+
         <section class="card">
             <h2>Сопряжённые устройства</h2>
             <div id="devices"></div>
