@@ -2,6 +2,10 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="parent-auth.xml" />
+        <exclude domain="sharedpref" path="parent-access.xml" />
+        <exclude domain="sharedpref" path="parent-mode.xml" />
+        <exclude domain="sharedpref" path="home-recovery.xml" />
+        <exclude domain="sharedpref" path="own-lock-task-policy.xml" />
         <exclude domain="sharedpref" path="youtube-debug-session.xml" />
         <exclude domain="file" path="device-tokens.json" />
         <exclude domain="file" path="idempotency.json" />
@@ -9,6 +13,10 @@
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="parent-auth.xml" />
+        <exclude domain="sharedpref" path="parent-access.xml" />
+        <exclude domain="sharedpref" path="parent-mode.xml" />
+        <exclude domain="sharedpref" path="home-recovery.xml" />
+        <exclude domain="sharedpref" path="own-lock-task-policy.xml" />
         <exclude domain="sharedpref" path="youtube-debug-session.xml" />
         <exclude domain="file" path="device-tokens.json" />
         <exclude domain="file" path="idempotency.json" />

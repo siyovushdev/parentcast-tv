@@ -11,8 +11,8 @@ android {
         applicationId = "dev.siyovush.parentcast.tv"
         minSdk = 33
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.1.0-m2"
+        versionCode = 5
+        versionName = "0.1.0-m3"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -23,6 +23,13 @@ android {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
         }
+        create("privileged") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-privileged-candidate"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -31,6 +38,8 @@ android {
             )
         }
     }
+
+    sourceSets.getByName("privileged").java.srcDir("src/debug/java")
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -57,4 +66,11 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+}
+
+// Candidate must be newer than the existing v5 data APK if system-image integration is approved.
+androidComponents {
+    onVariants(selector().withBuildType("privileged")) { variant ->
+        variant.outputs.forEach { output -> output.versionCode.set(6) }
+    }
 }
