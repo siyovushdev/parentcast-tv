@@ -7,10 +7,11 @@ import java.io.File
 
 class DebugYouTubeSession(context: Context) : YouTubeSession {
     private val file = File(context.filesDir, "youtube-cookies.txt")
+    private val preferences = context.getSharedPreferences("youtube-debug-session", Context.MODE_PRIVATE)
     private val lock = Any()
 
     @Volatile
-    private var sessionCookies: List<Cookie> = emptyList()
+    private var sessionCookies: List<Cookie> = restoreCookies()
 
     override val isSupported: Boolean
         get() = true
@@ -27,12 +28,14 @@ class DebugYouTubeSession(context: Context) : YouTubeSession {
         file.setWritable(false, false)
         file.setWritable(true, true)
         sessionCookies = parsed
+        preferences.edit().putBoolean(KEY_ENABLED, true).commit()
         parsed.size
     }
 
     override fun disableAndDelete() {
         synchronized(lock) {
             sessionCookies = emptyList()
+            preferences.edit().putBoolean(KEY_ENABLED, false).commit()
             check(!file.exists() || file.delete()) { "Could not delete cookie file" }
         }
     }
@@ -42,5 +45,19 @@ class DebugYouTubeSession(context: Context) : YouTubeSession {
         return sessionCookies.filter { cookie ->
             cookie.expiresAt > now && YouTubeCookiePolicy.matches(url, cookie)
         }
+    }
+
+    private fun restoreCookies(): List<Cookie> {
+        if (!preferences.getBoolean(KEY_ENABLED, false)) return emptyList()
+        return try {
+            NetscapeCookieParser.parse(file.readText(Charsets.UTF_8))
+        } catch (error: Exception) {
+            preferences.edit().putBoolean(KEY_ENABLED, false).commit()
+            emptyList()
+        }
+    }
+
+    companion object {
+        private const val KEY_ENABLED = "owner_enabled"
     }
 }

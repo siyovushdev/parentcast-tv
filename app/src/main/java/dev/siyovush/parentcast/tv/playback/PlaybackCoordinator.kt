@@ -22,6 +22,7 @@ class PlaybackCoordinator(
     private val player: PlaybackPlayer,
     private val scope: CoroutineScope,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val authorizationGate: () -> Boolean = { true },
 ) : PlaybackPlayer.Listener {
     private var state = QueueState.Empty
     private var status = PlaybackStatus.IDLE
@@ -81,6 +82,11 @@ class PlaybackCoordinator(
         error = null
         refreshAttempted = false
         persist()
+        if (!authorizationGate()) {
+            status = PlaybackStatus.WAITING_FOR_SESSION
+            emit()
+            return
+        }
         val current = state.currentItem ?: return
         if (preparedItemId == current.queueItemId) {
             status = PlaybackStatus.BUFFERING
@@ -89,6 +95,19 @@ class PlaybackCoordinator(
         } else {
             prepareCurrent()
         }
+    }
+
+    fun onSessionChanged() {
+        if (closed) return
+        if (!authorizationGate()) {
+            if (state.intent != PlaybackIntent.STOP && !state.finished) {
+                status = PlaybackStatus.WAITING_FOR_SESSION
+                emit()
+            }
+            return
+        }
+        if (state.intent == PlaybackIntent.STOP || state.finished) return
+        if (preparedItemId == null) prepareCurrent()
     }
 
     fun pauseResume() {
@@ -267,6 +286,11 @@ class PlaybackCoordinator(
 
     private fun prepareCurrent(preserveRefreshAttempt: Boolean = false) {
         val current = state.currentItem ?: return
+        if (!authorizationGate()) {
+            status = PlaybackStatus.WAITING_FOR_SESSION
+            emit()
+            return
+        }
         if (!preserveRefreshAttempt) refreshAttempted = false
         invalidateRequest()
         val requestGeneration = generation

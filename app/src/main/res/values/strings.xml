@@ -3,6 +3,7 @@
     <string name="app_name">ParentCast TV</string>
     <string name="player_waiting">Очередь пуста. Видео выбирает родитель.</string>
     <string name="player_loading">Загрузка выбранного видео…</string>
+    <string name="player_waiting_session">Сессия отключена. Включите её на родительском debug-экране.</string>
     <string name="player_buffering">Буферизация…</string>
     <string name="player_paused">Пауза</string>
     <string name="player_stopped">Просмотр остановлен</string>
