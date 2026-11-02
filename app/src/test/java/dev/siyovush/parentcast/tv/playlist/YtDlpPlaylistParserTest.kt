@@ -64,6 +64,18 @@ class YtDlpPlaylistParserTest {
         assertEquals(8, result.entries.last().index)
     }
 
+    @Test fun unlistedVideoInPublicPlaylistIsUnsupportedWhileUnknownRemainsSelectable() {
+        val result = parser.parse(playlist(listOf(
+            video(1, ",\"availability\":\"unlisted\""),
+            video(2),
+            video(3, ",\"availability\":\"public\""),
+        )))
+        assertEquals(PlaylistStatus.COMPLETE, result.status)
+        assertEquals(listOf(PlaylistAvailability.UNSUPPORTED, PlaylistAvailability.UNKNOWN,
+            PlaylistAvailability.AVAILABLE), result.entries.map { it.availability })
+        assertEquals(listOf(false, true, true), result.entries.map { it.selectable })
+    }
+
     @Test fun fiveHundredAcceptedButSentinelAndReportedOverflowRejectImport() {
         assertEquals(PlaylistStatus.COMPLETE, parser.parse(playlist((1..500).map { video(it) })).status)
         val sentinel = parser.parse(playlist((1..501).map { video(it) }))

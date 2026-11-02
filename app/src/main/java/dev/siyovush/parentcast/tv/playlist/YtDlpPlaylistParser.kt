@@ -65,7 +65,7 @@ class YtDlpPlaylistParser {
         val suppliedAvailability = item.text("availability")
         val unavailable = id == null || suppliedAvailability in setOf("private", "premium_only", "subscriber_only", "needs_auth", "unavailable") ||
             title.lowercase() in setOf("[deleted video]", "[private video]", "deleted video", "private video", "[unavailable video]")
-        val unsupported = item.path("is_live").asBoolean(false) || item.text("live_status") in setOf("is_live", "is_upcoming", "post_live") || item.path("release_timestamp").takeIf { it.isNumber }?.asLong()?.let { it > System.currentTimeMillis() / 1000 } == true
+        val unsupported = suppliedAvailability == "unlisted" || item.path("is_live").asBoolean(false) || item.text("live_status") in setOf("is_live", "is_upcoming", "post_live") || item.path("release_timestamp").takeIf { it.isNumber }?.asLong()?.let { it > System.currentTimeMillis() / 1000 } == true
         val availability = when {
             unavailable -> PlaylistAvailability.UNAVAILABLE
             unsupported -> PlaylistAvailability.UNSUPPORTED
