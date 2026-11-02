@@ -86,6 +86,14 @@
             android:text="@string/debug_save_pin" />
 
         <TextView
+            android:id="@+id/pinSaveStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:accessibilityLiveRegion="polite"
+            android:textColor="#FDD663"
+            android:textSize="18sp" />
+
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"

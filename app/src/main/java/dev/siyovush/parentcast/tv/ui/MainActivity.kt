@@ -42,6 +42,7 @@ import dev.siyovush.parentcast.tv.web.ParentHttpServer
 import dev.siyovush.parentcast.tv.web.PinSecurity
 import dev.siyovush.parentcast.tv.web.RequestSecurity
 import dev.siyovush.parentcast.tv.web.SharedPinSettings
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -81,6 +82,8 @@ open class MainActivity : Activity() {
     private lateinit var playlistPreviews: PlaylistPreviewManager
     private lateinit var pinInput: EditText
     private lateinit var newPinInput: EditText
+    private lateinit var pinSaveStatus: TextView
+    private var pinSaving = false
     private lateinit var savePinButton: Button
     private lateinit var panelStatus: TextView
     private lateinit var devicesContainer: LinearLayout
@@ -147,6 +150,7 @@ open class MainActivity : Activity() {
             it.transformationMethod = PasswordTransformationMethod.getInstance()
             it.isSaveEnabled = false
         }
+        pinSaveStatus = debugRoot.findViewById(R.id.pinSaveStatus)
         savePinButton = debugRoot.findViewById(R.id.savePinButton)
         panelStatus = debugRoot.findViewById(R.id.panelStatus)
         devicesContainer = debugRoot.findViewById(R.id.devicesContainer)
@@ -374,22 +378,39 @@ open class MainActivity : Activity() {
     }
 
     private fun savePin() {
-        if (!requireParent()) return
+        if (pinSaving || !requireParent()) return
         val hasPin = pairingManager.hasPin()
         val currentPin = if (hasPin) pinInput.text.toString() else null
         val newPin = if (hasPin) newPinInput.text.toString() else pinInput.text.toString()
         if (!PinSecurity.isValidPin(newPin)) {
-            debugStatus.setText(R.string.debug_pin_invalid)
+            pinSaveStatus.setText(R.string.debug_pin_invalid)
             return
         }
-        if (!pairingManager.createPin(newPin, currentPin)) {
-            debugStatus.setText(R.string.debug_pin_wrong)
-            return
-        }
+        pinSaving = true
+        savePinButton.isEnabled = false
+        pinInput.isEnabled = false
+        newPinInput.isEnabled = false
         pinInput.text.clear()
         newPinInput.text.clear()
-        debugStatus.setText(R.string.debug_pin_saved)
-        renderPinUi()
+        pinSaveStatus.setText(R.string.debug_pin_saving)
+        scope.launch {
+            try {
+                val saved = pairingManager.changePin(newPin, currentPin)
+                if (!retired && !isDestroyed) {
+                    pinSaveStatus.setText(if (saved) R.string.debug_pin_saved else R.string.debug_pin_wrong)
+                    renderPinUi()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (!retired && !isDestroyed) pinSaveStatus.setText(R.string.debug_pin_save_failed)
+            } finally {
+                pinSaving = false
+                savePinButton.isEnabled = true
+                pinInput.isEnabled = true
+                newPinInput.isEnabled = true
+            }
+        }
     }
 
     private fun renderPinUi() {

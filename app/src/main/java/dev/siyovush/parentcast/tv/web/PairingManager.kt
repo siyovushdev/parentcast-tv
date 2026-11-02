@@ -1,5 +1,8 @@
 package dev.siyovush.parentcast.tv.web
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 class PairingManager(
     private val pinSettings: PinSettings,
     private val tokenStore: TokenStore,
@@ -7,8 +10,11 @@ class PairingManager(
 ) {
     private val attempts = PinAttemptLimiter()
 
-    @Synchronized
+    // A UI read must not wait for the crypto/write monitor. SharedPreferences reads are thread-safe.
     fun hasPin(): Boolean = pinSettings.hasPin()
+
+    suspend fun changePin(pin: String, currentPin: String?): Boolean =
+        withContext(Dispatchers.Default) { createPin(pin, currentPin) }
 
     @Synchronized
     fun createPin(pin: String, currentPin: String? = null): Boolean {

@@ -41,6 +41,8 @@
     <string name="debug_change_pin">Сменить PIN</string>
     <string name="debug_pin_invalid">PIN должен содержать 6–12 цифр</string>
     <string name="debug_pin_wrong">Неверный действующий PIN</string>
+    <string name="debug_pin_saving">Проверка и сохранение PIN… Подождите.</string>
+    <string name="debug_pin_save_failed">Не удалось сохранить PIN. Повторите попытку.</string>
     <string name="debug_pin_saved">PIN сохранён</string>
     <string name="debug_browser_auth_hint">Для входа в веб-пульт достаточно действующего родительского PIN. Доступ каждого браузера можно отозвать отдельно.</string>
     <string name="debug_devices">Сопряжённые устройства</string>

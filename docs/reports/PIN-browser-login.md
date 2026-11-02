@@ -83,3 +83,43 @@ applicationId `dev.siyovush.parentcast.tv.debug`, versionCode5; signing verify P
 data-safe.json, apk-safe.json и Gradle logs. Секреты — только локально в .dev с ограниченными правами,
 не в Git/логах/PR. Reboot/flash/priv-app/Device Owner/Happ не затрагивались, M4 не начинался.
 Следующий шаг — ревью отдельного PR. Merge не выполнять.
+
+## Исправление ANR при смене PIN (2026-11-02)
+
+**IN SCOPE:** пользователь сообщил зависание с выходом в Launcher. Системный
+ApplicationExitInfo подтверждает ANR в 15:44:43 (input dispatch timeout >10s).
+Главный поток в ANR trace: PBKDF2 → PinSecurity.hashPin → PairingManager.createPin
+→ MainActivity.savePin. Это native-путь смены PIN, а не ошибка веб-входа.
+
+Проверка старого PIN, хеширование нового и запись перенесены на Dispatchers.Default;
+синхронизация изменений PIN сохранена. hasPin больше не ждёт монитор тяжёлой операции.
+Добавлен отдельный статус рядом с кнопкой: ожидание, неверный PIN, успех или ошибка;
+периодический playback render его не перезаписывает. Повторное нажатие блокируется,
+поля очищаются перед ожиданием. PBKDF2/число итераций, PIN-формат и токены не менялись.
+
+Регрессия JVM: при искусственно задержанной записи отдельный UI executor продолжает
+обрабатывать события и hasPin; запись выполняется на другом потоке. Проверены успешная
+смена и отказ со старым PIN без изменения записи. Это синтетический тест, не аппаратная
+смена пользовательского PIN.
+
+Проверки: 179 JVM tests, 0 failures/errors; testDebugUnitTest, lintDebug, assembleDebug,
+compileReleaseKotlin PASS (JDK17); JS syntax и оба frontend contract tests PASS.
+Первый запуск Gradle с системным Java8 отклонён до сборки, затем использован имеющийся JDK17.
+
+На подтверждённую H728/Android14 установлен обычный debug через adb install -r (Success).
+Package/versionCode5 и debug signer прежние. PIN record, browser tokens, saved collections,
+parent-mode и idempotency совпадают с контрольными значениями до обновления.
+Очередь и metadata cookies изменились между контрольными чтениями (приложение снова
+работало перед установкой); источник этих изменений отдельно не исследовался. Их побайтную
+неизменность не заявляем. Агент не посылал команды очереди, не читал/не перезаписывал cookies.
+Старый локальный тестовый PIN уже не соответствует сохранённой записи: не сбрасывали
+и не подбирали PIN, успешную native-смену на устройстве не повторяли (NOT_RUN).
+Пользователь повторяет её самостоятельно после обновления. Значения PIN не публиковались.
+
+Текущий APK по прежнему пути выше: SHA-256
+`f26ec12888e23e2baabb46ddeaa34c1d7e67e9c2bcc70b4fd2c1b0b1b1b01624`.
+Предыдущий SHA в разделе выше относится к исходному APK PR, до этого исправления.
+
+После обновления ParentCast запущен: PID32709, player UI доступен, новых ANR на момент
+проверки нет. В очереди2 элемента, intent PAUSE; команды воспроизведения не отправлялись.
+HOME по-прежнему com.google.android.tvlauncher/.MainActivity.

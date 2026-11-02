@@ -12,3 +12,9 @@
 разные токены, сохранение старых и независимый отзыв, browser token reload без хранения PIN,
 враждебный Host/Origin/Referer, unit/JS/lint/build/release compilation. H728: update без очистки,
 новый браузер по PIN, reload, отзыв тестового доступа, старый токен, сохранность данных.
+
+- [x] Исправить подтверждённый ANR native savePin: crypto/write вне UI, отдельный статус,
+  защита от повторного нажатия, regression test nonblocking UI/hasPin.
+- [x] 179 tests/lint/debug/release compilation и обновление H728 без сброса PIN.
+- [ ] Пользовательская успешная смена PIN на H728 после исправления: NOT_RUN агентом,
+  действующий пользовательский PIN неизвестен; новый PIN не запрашивался и не сбрасывался.
