@@ -26,3 +26,13 @@ Gradle unit/lint/debug/release Kotlin, проверка JS. H728: актуаль
 данных, update-r, фон/закрытие экрана при согласованной службе, пульт/QR, реальные проценты
 YouTube, безопасная очистка только собственных тестовых файлов, STOP/NEXT. Состояние в конце
 STOP, child=false, auto-resume=false, штатный Launcher, cookies/PIN/tokens сохранены.
+
+## Завершено
+
+Реализация `27245d5`; 202 unit tests, JS contracts, debug/lint/release Kotlin PASS.
+На H728 подтверждены mDNS/Chrome PIN+token, QR URL в native UI, служба после Launcher/удаления
+Activity, реальные video+audio проценты до81%, удаление собственных media/orphan tracks,
+потоковый показ через новую службу и STOP. Сохранены16 пользовательских записей очереди,
+PIN/cookies/tokens/подборки, stock HOME/child=false/auto=false. Реальная полная очистка этой
+очереди, полный новый download до READY и физический QR scan NOT_RUN. Отчёт и APK/SHA:
+`docs/reports/Home-admin-usability.md`. Только отдельный Draft PR, без Merge.
