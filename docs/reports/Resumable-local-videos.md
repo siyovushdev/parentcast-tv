@@ -131,6 +131,12 @@ PIN/cookies/токены/готовые пользовательские вид�
 `upload-real.json`, `sort-real.json`, `saf-real.json`, `range-pause.json`, `range-resume-real.json`,
 `process-restart.json`, `final-state.json`, `local-compare.json`, `ready-youtube-control.json` и кадры экрана.
 Повтор без RustDesk: `rustdesk-stopped-control.json`, `rustdesk-stopped-final.json`.
+После остановки RustDesk отдельно перезапущен только процесс ParentCast: повтор того же
+готового ролика через8s/PAUSE снова position0, AudioTrack активен с заполненным буфером,
+HDMI last-write10015296ms. Свидетельство: `rustdesk-stopped-restart-control.json`.
+Остановка RustDesk и перезапуск ParentCast не помогли; изменения Media3/прошивки без причины
+не вносились. Минимальная дальнейшая диагностика — контроль этого файла штатным плеером
+и проверка аудио HAL; перезапуск системного аудио/reboot не выполнять без отдельного разрешения.
 После повтора снова подтверждены20 исходных строк/текущий/позиция/STOP и три auth-digest;
 открыт штатный Launcher. Перезагрузка/перезапуск системного аудио не выполнялись.
 
