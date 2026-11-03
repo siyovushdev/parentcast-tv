@@ -43,6 +43,22 @@
             </div>
         </section>
 
+        <section class="card" aria-labelledby="preparedHeading">
+            <h2 id="preparedHeading">Подготовленная программа</h2>
+            <p class="muted">Заранее скачайте выбранную очередь. В этом режиме показываются только полностью готовые файлы; следующие загружаются во время просмотра. Включение не запускает и не останавливает текущий ролик, режим применяется при следующем запуске.</p>
+            <p class="muted">Лимит 2 ГиБ, резерв свободного места 1 ГиБ. Если следующий ролик не готов, придётся подождать. После перезапуска незавершённая загрузка начинается заново.</p>
+            <p id="preparedSummary" role="status">Нет данных</p>
+            <div class="actions">
+                <button data-prepared="ENABLE">Подготовить очередь / продолжить</button>
+                <button data-prepared="PAUSE" class="secondary">Остановить подготовку</button>
+                <button data-prepared="RETRY" class="secondary">Повторить ошибки</button>
+                <button data-prepared="CLEANUP" class="secondary">Удалить файлы вне очереди</button>
+                <button data-prepared="DISABLE" class="secondary">Вернуться к потоковому режиму</button>
+            </div>
+            <p id="preparedMessage" class="message"></p>
+            <div id="preparedEntries"></div>
+        </section>
+
         <section class="card">
             <h2>Включить сейчас</h2>
             <label>YouTube-ссылка <input id="playNowLink" type="url" autocomplete="off" placeholder="https://youtu.be/…"></label>

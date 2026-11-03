@@ -31,6 +31,7 @@ class PlaybackCoordinator(
     private var status = PlaybackStatus.IDLE
     private var currentTitle = ""
     private var diagnostics = ""
+    private var localPlayback = false
     private var error: PlaybackFailure? = null
     private var storageWarning = false
     private var startupStorageBlocked = false
@@ -343,6 +344,7 @@ class PlaybackCoordinator(
         try {
             preparedItemId = queueItemId
             currentTitle = resolved.title
+            localPlayback = resolved.video.url.startsWith("file:")
             diagnostics = resolved.selectionDescription
             player.prepare(
                 generation = generation,
@@ -414,6 +416,7 @@ class PlaybackCoordinator(
     }
 
     private fun invalidateRequest() {
+        localPlayback = false
         generation++
         extractionJob?.cancel()
         extractionJob = null
@@ -443,6 +446,7 @@ class PlaybackCoordinator(
     fun currentSnapshot(): CoordinatorSnapshot = CoordinatorSnapshot(
         queueState = state,
         status = status,
+        localPlayback = localPlayback,
         currentTitle = currentTitle,
         diagnostics = diagnostics,
         error = error,

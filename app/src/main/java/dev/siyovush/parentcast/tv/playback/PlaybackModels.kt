@@ -41,6 +41,7 @@ data class CoordinatorSnapshot(
     val generation: Long = 0,
     val storageWarning: Boolean = false,
     val updatedAtMs: Long = 0,
+    val localPlayback: Boolean = false,
 )
 
 interface PlaybackPlayer {

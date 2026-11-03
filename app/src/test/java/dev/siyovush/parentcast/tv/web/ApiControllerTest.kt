@@ -235,6 +235,30 @@ class ApiControllerTest {
         assertTrue(fixture.tokenStore.list().isEmpty())
     }
 
+    @Test
+    fun preparationUsesAuthenticationCsrfVersionAndCommandFingerprint() {
+        val f = Fixture()
+        assertEquals(401, f.controller.handle(request("GET", "/api/prepared", f.auth(null))).code)
+        val token = f.pair()
+        f.add("https://youtu.be/jNQXAC9IVRw", "prepared-add", token)
+        val queue = JSONObject(f.controller.stateBody()); val version = queue.getLong("queueVersion")
+        val body = JSONObject().put("action", "ENABLE").put("queueVersion", version).put("idempotencyKey", "prepare-key-1")
+        assertEquals(421, f.controller.handle(request("POST", "/api/prepared", f.auth(token) + ("host" to "evil.invalid:8765"), body.toString())).code)
+        assertEquals(403, f.controller.handle(request("POST", "/api/prepared", f.auth(token) + ("origin" to "http://evil.invalid"), body.toString())).code)
+        val stale = JSONObject(body.toString()).put("queueVersion", version - 1).put("idempotencyKey", "prepare-stale")
+        assertEquals(409, f.controller.handle(request("POST", "/api/prepared", f.auth(token), stale.toString())).code)
+        val first = f.controller.handle(request("POST", "/api/prepared", f.auth(token), body.toString()))
+        assertEquals(200, first.code)
+        assertEquals(first, f.controller.handle(request("POST", "/api/prepared", f.auth(token), body.toString())))
+        body.put("action", "DISABLE")
+        assertEquals(409, f.controller.handle(request("POST", "/api/prepared", f.auth(token), body.toString())).code)
+        val after = JSONObject(f.controller.stateBody())
+        assertEquals(version, after.getLong("queueVersion"))
+        assertEquals(queue.getJSONArray("items").toString(), after.getJSONArray("items").toString())
+        assertEquals(queue.getString("intent"), after.getString("intent"))
+        assertTrue(after.getJSONObject("prepared").getBoolean("enabled"))
+    }
+
     private inner class Fixture {
         val tokenFile = file("devices.json")
         val tokenStore = AtomicTokenStore(tokenFile)
@@ -268,6 +292,12 @@ class ApiControllerTest {
             },
             scope = CoroutineScope(Dispatchers.Unconfined),
         )
+        val callDispatcher = object : CallDispatcher { override fun <T> call(block: () -> T): T = block() }
+        val library = dev.siyovush.parentcast.tv.prepared.PreparedLibrary(
+            dev.siyovush.parentcast.tv.prepared.PreparedStore(temporaryFolder.newFolder()),
+            object : YouTubeSource { override suspend fun resolve(videoId: String): ResolvedVideo = error("No implicit download/play") },
+            dev.siyovush.parentcast.tv.prepared.TrackDownloader { _, _, _, _ -> error("No implicit download") },
+            CoroutineScope(Dispatchers.Unconfined), { _, _, _ -> })
         val controller = ApiController(
             pairingManager = pairingManager,
             tokenStore = tokenStore,
@@ -278,6 +308,7 @@ class ApiControllerTest {
             },
             security = RequestSecurity(setOf("192.168.68.121", "127.0.0.1"), 8765),
             assetLoader = { "<html></html>" },
+            prepared = dev.siyovush.parentcast.tv.prepared.PreparedApi(library, coordinator, callDispatcher),
         )
 
         fun pair(): String {
