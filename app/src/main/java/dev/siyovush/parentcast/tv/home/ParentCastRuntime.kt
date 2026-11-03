@@ -26,13 +26,16 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
     val coordinator = PlaybackCoordinator(PreparedYouTubeSource(prepared, YtDlpYouTubeSource(app, session)),
         AtomicQueueStore(File(app.filesDir, "queue-state.json")), player, scope,
         autoResumeOnStartup = ParentModeSettings(app).autoResumeAfterBoot,
-        authorizationGate = { prepared.snapshot().enabled || !session.isSupported || session.isEnabled })
+        authorizationGate = { prepared.snapshot().enabled || !session.isSupported || session.isEnabled },
+        localSource = object : dev.siyovush.parentcast.tv.youtube.YouTubeSource { override suspend fun resolve(videoId: String) = prepared.localOrWait(videoId, own = true) ?: error("LOCAL_FILE_NOT_FOUND") })
     val tokens = AtomicTokenStore(File(app.filesDir, "device-tokens.json"))
     val pairing = PairingManager(SharedPinSettings(app), tokens)
     private val previews = PlaylistPreviewManager(dev.siyovush.parentcast.tv.playlist.YtDlpPlaylistSource(app))
     private val observers = mutableSetOf<(CoordinatorSnapshot) -> Unit>()
     private val addresses = LocalAddressProvider()
     private val dispatcher = MainThreadDispatcher(handler)
+    val usb = dev.siyovush.parentcast.tv.local.UsbSource(app)
+    private val localMedia = dev.siyovush.parentcast.tv.local.LocalVideoApi(prepared,coordinator,dispatcher,File(app.noBackupFilesDir,"local-import-jobs.json"),scope,::devLocalValidate,usb)
     private val controller: ApiController
     private var server: ParentHttpServer? = null
     var serverError: Boolean = false
@@ -45,6 +48,16 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
         player.detachView(view)
         if (pause) handler.postDelayed(pauseWhenHidden, 500)
     }
+    private val connectivity = app.getSystemService(android.net.ConnectivityManager::class.java)
+    private var lastNetworkWake = 0L
+    private val networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: android.net.Network, capabilities: android.net.NetworkCapabilities) {
+            if(capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                val now=android.os.SystemClock.elapsedRealtime()
+                if(now-lastNetworkWake>3_000) { lastNetworkWake=now;prepared.networkAvailable() }
+            }
+        }
+    }
     private val ticker = object : Runnable {
         override fun run() { coordinator.savePosition(); handler.postDelayed(this, 5_000) }
     }
@@ -55,23 +68,27 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
         api = ApiController(pairing, tokens, AtomicIdempotencyStore(File(app.filesDir, "idempotency.json")), coordinator,
             dispatcher, RequestSecurity(emptySet(), PORT) { addresses.panelHosts() + network.aliases() },
             { path -> app.assets.open(path).bufferedReader().use { it.readText() } }, playlists,
-            PreparedApi(prepared, coordinator, dispatcher), connectUrls = { network.urls() }, displayReady = { dispatcher.call { player.hasVisibleView() } })
+            PreparedApi(prepared, coordinator, dispatcher), connectUrls = { network.urls() }, displayReady = { dispatcher.call { player.hasVisibleView() } }, localMedia = localMedia, mediaTitle = prepared::mediaTitle)
         controller = api
         coordinator.setListener { snapshot ->
             val q = snapshot.queueState
-            prepared.schedule(q.items.drop(q.currentIndex.coerceAtLeast(0)).map { it.videoId })
+            prepared.schedule(q.items.drop(q.currentIndex.coerceAtLeast(0)).filterNot { it.local }.map { it.videoId })
             changed(snapshot)
             observers.toList().forEach { it(snapshot) }
         }
         try { server = ParentHttpServer(PORT, controller).apply { start(5_000, true) } }
         catch (_: Exception) { serverError = true }
+        connectivity.registerDefaultNetworkCallback(networkCallback)
         coordinator.start(); prepared.resumePending(); handler.postDelayed(ticker, 5_000)
     }
     fun observe(observer: (CoordinatorSnapshot) -> Unit) { observers += observer; observer(coordinator.currentSnapshot()) }
     fun unobserve(observer: (CoordinatorSnapshot) -> Unit) { observers -= observer }
     fun close() {
-        handler.removeCallbacksAndMessages(null); server?.stop(); previews.close(); network.close()
+        runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
+        handler.removeCallbacksAndMessages(null); server?.stop(); previews.close(); network.close(); localMedia.close()
         try { coordinator.savePosition() } finally { coordinator.close(); player.release(); scope.cancel(); observers.clear() }
     }
     companion object { const val PORT = 8765 }
 }
+
+private fun devLocalValidate(file: File) = dev.siyovush.parentcast.tv.local.validateLocalMedia(file)

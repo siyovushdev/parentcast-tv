@@ -20,8 +20,10 @@ internal object PreparedRuntime {
         instance ?: run {
             val app = context.applicationContext
             val session = sharedSession ?: session(app)
-            PreparedLibrary(PreparedStore(File(app.noBackupFilesDir, "prepared-programme")),
-                YtDlpYouTubeSource(app, session, publicOnly = true), HttpTrackDownloader(session),
+            val store = PreparedStore(File(app.noBackupFilesDir, "prepared-programme"))
+            val budget = MediaBudget(store.directory)
+            PreparedLibrary(store,
+                YtDlpYouTubeSource(app, session, publicOnly = true), HttpTrackDownloader(session, budget, transferEvent={event,offset -> android.util.Log.i("ParentCastTransfer","$event offset=$offset")}),
                 CoroutineScope(SupervisorJob() + Dispatchers.IO), ::validate,
                 wakeService = { android.os.Handler(app.mainLooper).post {
                     try { app.startForegroundService(Intent(app, PreparationService::class.java)) }
@@ -29,7 +31,7 @@ internal object PreparedRuntime {
                         instance?.serviceUnavailable()
                         android.util.Log.w("ParentCastPreparation", "Foreground start rejected; preparation paused")
                     }
-                } }, onFailure = { id, error -> android.util.Log.w("ParentCastPreparation", "$id: ${error.safeDiagnostic()}") }).also { instance = it }
+                } }, budget = budget, onFailure = { id, error -> android.util.Log.w("ParentCastPreparation", "$id: ${error.safeDiagnostic()}") }).also { instance = it }
         }
     }
     private fun validate(file: File, audio: Boolean, durationSeconds: Long) {

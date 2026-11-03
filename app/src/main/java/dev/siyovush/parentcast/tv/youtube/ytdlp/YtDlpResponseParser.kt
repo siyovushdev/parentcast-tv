@@ -62,6 +62,10 @@ class YtDlpResponseParser {
             url = url,
             mimeType = if (isVideo) "video/mp4" else "audio/mp4",
             headers = allowedHeaders(node.get("http_headers") ?: root.get("http_headers")),
+            resumeIdentity = node.path("format_id").asText().takeIf { it.matches(Regex("[A-Za-z0-9_.-]{1,100}")) }?.let { id ->
+                val revision = runCatching { URI(url).rawQuery.orEmpty().split('&').firstOrNull { it.startsWith("lmt=") }?.substringAfter('=')?.takeIf { it.matches(Regex("[0-9]{1,20}")) } }.getOrNull()
+                id + "|" + node.path("vcodec").asText() + "|" + node.path("acodec").asText() + (revision?.let { "|revision=$it" } ?: "")
+            }.orEmpty(),
             sizeBytes = node.get("filesize")?.asLong()?.takeIf { it > 0 }
                 ?: runCatching { URI(url).rawQuery.orEmpty().split('&').firstOrNull { it.startsWith("clen=") }
                     ?.substringAfter('=')?.toLongOrNull()?.takeIf { it > 0 } }.getOrNull(),

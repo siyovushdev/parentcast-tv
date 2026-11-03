@@ -51,6 +51,9 @@
             android:textColor="#8AB4F8"
             android:textSize="16sp" />
 
+        <Button android:id="@+id/usbFolderButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Выбрать папку USB / локальных видео" />
+        <Button android:id="@+id/usbDisconnectButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Отключить доступ к папке" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Выберите папку один раз через Android. Затем файлы можно копировать через веб-пульт. Исходные файлы не удаляются." />
         <ImageView
             android:id="@+id/panelQr"
             android:layout_width="240dp"

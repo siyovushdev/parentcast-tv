@@ -93,10 +93,11 @@ class YtDlpYouTubeSource(
             "sockettimeoutexception" in normalized ||
             "connectexception" in normalized ||
             "network is unreachable" in normalized ||
-            "connection reset" in normalized
+            "connection reset" in normalized || "timed out" in normalized || "temporary failure in name resolution" in normalized || "remote end closed" in normalized || "http error 5" in normalized || "http error 429" in normalized || "http error 403" in normalized
         val kind = when {
             loginRequired -> PlaybackErrorKind.EXTRACTOR
             network -> PlaybackErrorKind.NETWORK
+            "video unavailable" in normalized || "private video" in normalized || "video has been removed" in normalized || "no longer available" in normalized -> PlaybackErrorKind.UNAVAILABLE
             else -> PlaybackErrorKind.EXTRACTOR
         }
         return YouTubeSourceException(

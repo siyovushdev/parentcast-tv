@@ -34,6 +34,8 @@ internal class ApiController(
     private val prepared: dev.siyovush.parentcast.tv.prepared.PreparedApi? = null,
     private val connectUrls: (() -> List<String>)? = null,
     private val displayReady: (() -> Boolean)? = null,
+    private val localMedia: dev.siyovush.parentcast.tv.local.LocalVideoApi? = null,
+    private val mediaTitle: (String) -> String = { "" },
 ) {
     fun handle(request: ApiRequest): ApiResponse {
         if (!security.isHostAllowed(request.headers["host"])) {
@@ -44,11 +46,24 @@ internal class ApiController(
         return when {
             request.method == "GET" && request.path == "/" -> staticAsset("web/index.html", "text/html; charset=utf-8")
             request.method == "GET" && request.path == "/app.js" -> staticAsset("web/app.js", "text/javascript; charset=utf-8")
+            request.method == "GET" && request.path == "/media.js" -> staticAsset("web/media.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/style.css" -> staticAsset("web/style.css", "text/css; charset=utf-8")
             request.method == "GET" && request.path == "/api/health" -> ApiResponse(200, JSONObject().put("ok", true).put("version", 1).toString())
             request.method == "POST" && request.path == "/api/pair" -> pair(request)
             else -> authorizedApi(request)
         }
+    }
+
+    /** Authenticate before reading an arbitrary-size media body. Never use the JSON body parser. */
+    fun upload(request: ApiRequest, length: Long, input: java.io.InputStream): ApiResponse {
+        if(!security.isHostAllowed(request.headers["host"])) return ApiResponse(421,error("MISDIRECTED_HOST"))
+        val device=authorizedDevice(request.headers) ?: return ApiResponse(401,error("UNAUTHORIZED"))
+        if(request.method!="POST" || !security.isStateChangeAllowed(request.headers)) return ApiResponse(403,error("FORBIDDEN"))
+        if(length !in 1..dev.siyovush.parentcast.tv.prepared.LIBRARY_LIMIT || request.headers.containsKey("transfer-encoding")) return ApiResponse(413,error("BODY_TOO_LARGE"))
+        if(request.headers["content-type"]?.substringBefore(';')?.trim()!="application/octet-stream") return ApiResponse(415,error("BAD_MEDIA_INPUT"))
+        val id=request.path.removePrefix("/api/local/upload/")
+        if(!id.matches(Regex("[A-Za-z0-9-]{36}"))) return ApiResponse(400,error("BAD_REQUEST"))
+        return localMedia?.upload(id,device.deviceId,length,input) ?: ApiResponse(404,error("NOT_FOUND"))
     }
 
     private fun pair(request: ApiRequest): ApiResponse {
@@ -74,6 +89,7 @@ internal class ApiController(
         if (request.method == "GET" && request.path == "/api/prepared") return ApiResponse(200, prepared?.state()?.toString() ?: "{}")
         if (request.method == "GET" && request.path == "/api/devices") return devices()
         if (request.method == "GET") {
+            localMedia?.read(request.path, device.deviceId)?.let { return it }
             playlists?.read(request.path, device.deviceId)?.let { return it }
         }
         if (request.method != "POST") return ApiResponse(404, error("NOT_FOUND"))
@@ -85,6 +101,32 @@ internal class ApiController(
             "/api/playback" -> mutation(request, device) { json -> playback(json) }
             "/api/queue/delete" -> mutation(request, device) { json -> deletePending(json) }
             "/api/queue/move" -> mutation(request, device) { json -> movePending(json) }
+            "/api/queue/select" -> mutation(request, device) { json ->
+                try {
+                    if(json.optBoolean("play") && displayReady?.invoke()==false) 409 to error("OPEN_PLAYER_ON_TV")
+                    else when(dispatcher.call {coordinator.selectQueued(json.optString("queueItemId"),json.optLong("queueVersion",-1),json.optLong("positionMs",0),json.optBoolean("play"),commandStorageKey(request,device,json),requestFingerprint(json))}) {
+                        dev.siyovush.parentcast.tv.queue.BatchAddResult.APPLIED,dev.siyovush.parentcast.tv.queue.BatchAddResult.REPLAY -> 200 to stateBody()
+                        dev.siyovush.parentcast.tv.queue.BatchAddResult.CONFLICT -> conflict()
+                        dev.siyovush.parentcast.tv.queue.BatchAddResult.KEY_REUSED -> 409 to error("IDEMPOTENCY_KEY_REUSED")
+                        else -> 503 to error("COMMAND_STORAGE_ERROR")
+                    }
+                } catch (_:IllegalArgumentException){badRequest()}
+            }
+            "/api/queue/reorder" -> mutation(request, device) { json ->
+                try {
+                    val a=json.getJSONArray("queueItemIds");require(a.length()<=10_000)
+                    val ids=List(a.length()) { a.getString(it) }
+                    when(dispatcher.call { coordinator.reorderPending(ids,json.optLong("queueVersion",-1),commandStorageKey(request,device,json),requestFingerprint(json)) }) {
+                        dev.siyovush.parentcast.tv.queue.BatchAddResult.APPLIED,dev.siyovush.parentcast.tv.queue.BatchAddResult.REPLAY -> 200 to stateBody()
+                        dev.siyovush.parentcast.tv.queue.BatchAddResult.CONFLICT -> conflict()
+                        dev.siyovush.parentcast.tv.queue.BatchAddResult.KEY_REUSED -> 409 to error("IDEMPOTENCY_KEY_REUSED")
+                        dev.siyovush.parentcast.tv.queue.BatchAddResult.RECEIPT_LIMIT -> 429 to error("COMMAND_STORAGE_LIMIT")
+                        else -> 503 to error("COMMAND_STORAGE_ERROR")
+                    }
+                } catch (_: IllegalArgumentException) { badRequest() }
+                  catch (_: org.json.JSONException) { badRequest() }
+                  catch (_: Exception) { 503 to error("COMMAND_STORAGE_ERROR") }
+            }
             "/api/queue/clear-all" -> mutation(request, device) { json ->
                 try {
                     if (dispatcher.call { coordinator.clearAll(json.optLong("queueVersion", -1)) }) 200 to stateBody() else conflict()
@@ -92,7 +134,9 @@ internal class ApiController(
             }
             "/api/queue/clear" -> mutation(request, device) { json -> clearPending(json) }
             "/api/devices/revoke" -> mutation(request, device) { json -> revoke(json) }
-            else -> if (playlists?.handles(request.path) == true) {
+            else -> if(localMedia?.handles(request.path)==true) {
+                mutation(request,device) { json -> localMedia.mutate(request.path,device.deviceId,json,commandStorageKey(request,device,json),requestFingerprint(json)) }
+            } else if (playlists?.handles(request.path) == true) {
                 mutation(request, device) { json ->
                     playlists.mutate(request.path, device.deviceId, json, commandStorageKey(request, device, json), requestFingerprint(json)).let { it.code to it.body }
                 }
@@ -116,7 +160,7 @@ internal class ApiController(
         val key = json.optString("idempotencyKey")
         if (key.length < 8 || key.length > 100) return ApiResponse(400, error("BAD_REQUEST"))
         val storageKey = commandStorageKey(request, device, json)
-        val fingerprint = if (playlists?.handles(request.path) == true || request.path in setOf("/api/prepared", "/api/queue/clear-all")) requestFingerprint(json) else null
+        val fingerprint = if (playlists?.handles(request.path) == true || localMedia?.handles(request.path)==true || request.path in setOf("/api/prepared", "/api/queue/clear-all", "/api/queue/reorder", "/api/queue/select")) requestFingerprint(json) else null
         idempotencyStore.get(storageKey)?.let {
             if (fingerprint != null && it.requestFingerprint != fingerprint) return ApiResponse(409, error("IDEMPOTENCY_KEY_REUSED"))
             return ApiResponse(it.code, it.body)
@@ -236,7 +280,7 @@ internal class ApiController(
             items.put(
                 JSONObject()
                     .put("queueItemId", item.queueItemId)
-                    .put("videoId", item.videoId),
+                    .put("videoId", item.videoId).put("local",item.local).put("title",mediaTitle(item.videoId)),
             )
         }
         val error = snapshot.error?.let { failure ->

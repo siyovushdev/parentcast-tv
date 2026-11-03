@@ -1,0 +1,122 @@
+# Докачка, свои видео, USB и порядок — 2026-11-03
+
+IN SCOPE: `tasks/Resumable-local-videos.md`. Ветка `codex/resume-local-videos` от9f9c7de,
+stacked поверх Draft PR #9. Без Merge/Release. Приоритет детского приложения закреплён в
+AGENTS: только явный выбор родителя, проверенные файлы, честные статусы и сохранность данных.
+
+## Реализация
+
+YouTube-подготовка сохраняет partial при сетевой ошибке/паузе/отмене. Свежий resolve получает
+новый URL; URL/cookies/заголовки авторизации в resume-index не сохраняются. Sidecar содержит
+идентичность формата/ревизии, total, сильный ETag либо допустимый Last-Modified, complete/SHA.
+Range/If-Range append разрешён только при206, точном Content-Range/длине и совпадении validator.
+200 означает restart; некорректный206/416 не склеивает файлы. Проверенный416 может подтвердить
+полный partial. Завершённая дорожка с той же provider revision и SHA переиспользуется при
+повторе соседней дорожки. Corruption не переименовывается в новую готовность. Проверяется
+каждый CDN redirect; произвольные URLs не принимаются. Диагностика RESUMED_206 содержит
+только событие/offset, без URL/секретов.
+
+Сетевые retry автоматические:5→10→20…до300с, Retry-After до600с. Восстановление validated
+Android-сети ускоряет попытку; Happ не изменяется. Приоритет у ближайшего незавершённого
+элемента программы: он не ждёт скачивания следующего большого ролика. Авторизация, недоступный
+ролик, неподдерживаемый формат, место/ошибка хранения не превращаются в network busy loop.
+Пауза и STOP не блокируются передачей; отмена закрывает socket и проверку SHA. Старый индекс
+без resumeVersion один раз переводит DOWNLOAD_FAILED в автоматический повтор.
+
+Свои видео копируются в тот же private media-бюджет10GiB/reserve1GiB. Browser upload — отдельный
+потоковый endpoint, без JSON-буферизации большого файла; Host/Origin/bearer/custom-header,
+точная длина и ограничение размера проверяются до чтения body. Upload id принадлежит браузеру,
+повтор готового upload не создаёт второй файл. Две передачи ограничены semaphore, все writers
+проверяют общий бюджет перед записью. Прерывание/отмена/ошибка формата не дают READY.
+MediaExtractor/MetadataRetriever проверяют контейнер/длительность, MediaCodecList — декодеры,
+DRM не поддерживается. MP4/MKV/WebM/3GP зависят от реальных кодеков H728; транскодирования нет.
+
+Импортированное видео имеет отдельный `local_<uuid>` namespace и явный source-признак очереди.
+Его source никогда не делает fallback на YouTube и работает при выключенном streaming/session.
+YouTube cleanup/автовытеснение не удаляют свои видео. Их удаление отдельно подтверждается.
+Импорт сохраняет файл в библиотеку, явное добавление выбранных — в очередь без PLAY.
+«Смотреть» выбирает существующую строку без вставки дубликата. Queue snapshotv1 читается,
+новая записьv2 сохраняет source-признак; старый decoder не может принять local-id за YouTube.
+
+USB/локальная папка приставки выбирается один раз через PIN-защищённую кнопку и штатный
+ACTION_OPEN_DOCUMENT_TREE, READ only. Используется только системный externalstorage provider;
+браузер получает opaque keys из явно выбранного дерева, не произвольные URI/path. Папки
+просматриваются по запросу родителя, копируются только отмеченные файлы, исходники не меняются.
+Отзыв/извлечение/ошибка чтения дают ошибку, скопированные файлы остаются независимыми от USB.
+Перезапуск прерванного USB/browser import требует повторного выбора исходного файла.
+
+Редактор порядка работает с ожидающим suffix. Стрелки, позиция, desktop drag и сортировка
+по названию/готовности меняют черновик до подтверждения. QueueVersion и receipt сохраняются
+атомарно с новым порядком; stale/replay не перетирают новые изменения. Текущий ролик, позиция,
+намерение PLAY/PAUSE/STOP и история не сдвигаются. Появилась навигация по разделам; автоопрос
+не пересоздаёт неизменившийся редактор/checkbox-список и не сбрасывает фокус. Строки имён
+выводятся textContent, технические ошибки объясняются родителю.
+
+## Проверки кода
+
+```
+JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ANDROID_HOME=/home/siovush/Android/Sdk \
+  ./gradlew testDebugUnitTest assembleDebug lintDebug compileReleaseKotlin --no-daemon
+node --check app/src/main/assets/web/app.js
+node --check app/src/main/assets/web/media.js
+node tools/local_media_web_test.mjs
+node tools/prepared_web_test.mjs
+node tools/pin_login_web_test.mjs
+node tools/m2_web_contract_test.mjs
+```
+
+224 JVM tests PASS,0 failures/errors; debug/release Kotlin PASS; lint0 errors/50 warnings.
+Две проверки syntax и четыре JS contracts PASS. Diff whitespace PASS.
+
+- MockWebServer проводит реальный HTTP-обмен с разрывом socket и Range206,200,416,
+  изменением validator/URL, неизвестной длиной, отменой и corruption завершённой дорожки.
+  Это синтетический сервер, **не YouTube**.
+- Настоящий NanoHTTPD в JVM принимает raw upload без JSON parser и отвечает401 на запрос с
+  большим Content-Length без ожидания body. Проверены Host/Origin/token/CSRF/length/type,
+  отмена InputStream, quota, невалидное медиа, idempotency, local-only source и migration.
+- USB unit fixture проверяет выбор/копирование/извлечение без изменения очереди; он не
+  объявляется физическим USB-испытанием. Android MediaExtractor не заменён JVM-заглушкой в APK;
+  в unit-тестах validator намеренно fake и это не доказывает воспроизведение.
+- В реальном Chrome на Ubuntu проверен frontend на явно помеченном fixture backend:
+  редактор, перемещение/применение, версия1→2, intent STOP; локальные названия/checkbox UI.
+  Это проверка интерфейса, **не интеграция нового APK с H728**. На узкой эмулированной области
+  DOM width=scrollWidth468; это не физический телефон и не обещание точного device viewport.
+
+## APK и совместимость
+
+Локальный артефакт: `artifacts/resume-local-videos/parentcast-tv-v0.1-resume-local-debug.apk`.
+SHA-256: `559d0df34be7624147719877f0adfe2a7c42260e1987f59e7636fe32fcfadd5b`.
+ApplicationId `dev.siyovush.parentcast.tv.debug`; versionCode7, versionName0.1.0-local-beta-debug.
+Обычная debug-подпись, APK v2 verification PASS; certificate SHA-256
+`de2cf22c47b6e4039da04107631b31d92ecddeb6984eeae5d43107337cceecf8`.
+Нет PrivilegedKioskActivity/ALWAYS в обычном manifest; platform-ключ не используется.
+
+## H728 — приёмка пока не завершена
+
+Цель подтверждена read-only: H728 Android14, serial…84201a; rk3568 не использовалась.
+В начале очередь20 элементов, версия53, PAUSE; владелец выполняет реальные загрузки.
+Готовый пользовательский ролик сохранён, следующий большой ролик продолжает передачу старой
+версией. Установка сейчас прервёт старую передачу: старый downloader не сохранял validator,
+поэтому безопасно объявить её докачиваемой новым кодом нельзя. Выбор «ждать завершения /
+обновить сейчас с повторной загрузкой» задан владельцу; до ответа выбран безопасный путь
+сохранения текущей загрузки. Все независимые код/тесты/сборка подготовлены.
+
+На устройстве найдена штатная DocumentsUI для OPEN_DOCUMENT_TREE. Физической USB пока нет:
+sm list-volumes показывает только private/emulated. Владелец получил запрос подключить флешку.
+
+| Сценарий нового APK | Статус | Причина |
+|---|---|---|
+| Update без очистки | NOT_RUN | Ожидается безопасная граница текущей старой передачи либо выбор владельца |
+| Реальный YouTube Range/retry на H728 | NOT_RUN | Новый APK пока не установлен; HTTP fixture не подменяет эту проверку |
+| Browser upload → Android validation → local playback | NOT_RUN | Готов тестовый MP4 из собственных прежних демонстрационных video/audio, требуется update |
+| Реальный порядок очереди на H728 | NOT_RUN | До update доступны только прежние команды; новые покрыты JVM/frontend fixture |
+| Реальный USB import/извлечение | NOT_RUN | Нужна физическая флешка и grant папки через штатный UI |
+| Reboot/Happ/DO/privileged/system | NOT_RUN | Не разрешены в этом задании, не выполнялись |
+
+PIN/cookies/токены/очередь/готовые файлы не сбрасывались. На этом этапе новая версия **не
+выдаётся за установленную или аппаратно принятую**. Следующий шаг — безопасный update и
+реальная приёмка, затем дополнение этого отчёта; Merge не выполнять.
+
+Механизмы: [HTTP Range/If-Range/validators, RFC9110](https://www.rfc-editor.org/rfc/rfc9110.html),
+[Android SAF и USB providers](https://developer.android.com/guide/topics/providers/document-provider),
+[Persistable grants и ограничения выбора папок](https://developer.android.com/training/data-storage/shared/documents-files).
