@@ -26,3 +26,12 @@ youtubedl-android не перелицензируются; их свободны
 получить командой `./gradlew app:dependencies --configuration debugRuntimeClasspath`.
 Тестовые JUnit 4.13.2, kotlinx-coroutines-test 1.9.0 и org.json 20240303 не включаются в debug APK
 как runtime-компоненты приложения.
+
+## Домашний пульт
+
+- ZXing Core3.5.4 — Apache-2.0, https://github.com/zxing/zxing/tree/zxing-3.5.4 .
+  Используется только генератор/проверка QR в приложении; отдельное приложение Barcode Scanner не устанавливается.
+- JmDNS3.6.5 — Apache-2.0, https://github.com/jmdns/jmdns . Объявление собственного локального
+  имени/HTTP-сервиса. Уведомление JmDNS сохранено в assets/licenses/JmDNS-NOTICE.txt.
+- Транзитивный SLF4J API2.0.7 — MIT, https://github.com/qos-ch/slf4j . Точные версии — Gradle runtime classpath.
+  Тексты лицензий, присутствующие в опубликованных JAR, дополнительно сохранены в assets/licenses.

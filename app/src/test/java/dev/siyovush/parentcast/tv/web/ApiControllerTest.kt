@@ -259,7 +259,76 @@ class ApiControllerTest {
         assertTrue(after.getJSONObject("prepared").getBoolean("enabled"))
     }
 
-    private inner class Fixture {
+    @Test
+    fun fullClearChecksVersionStopsAndDoesNotRepeatOnNewItems() {
+        val f = Fixture(); val token = f.pair()
+        f.add("https://youtu.be/jNQXAC9IVRw", "clear-first-add", token)
+        val before = f.coordinator.currentSnapshot().queueState
+        val command = JSONObject().put("queueVersion", before.version - 1).put("idempotencyKey", "clear-stale-1")
+        fun clear() = f.controller.handle(request("POST", "/api/queue/clear-all", f.auth(token), command.toString()))
+        assertEquals(409, clear().code)
+        assertEquals(before, f.coordinator.currentSnapshot().queueState)
+        command.put("queueVersion", before.version).put("idempotencyKey", "clear-full-once")
+        val first = clear()
+        assertEquals(200, first.code)
+        val empty = f.coordinator.currentSnapshot().queueState
+        assertTrue(empty.items.isEmpty())
+        assertEquals(dev.siyovush.parentcast.tv.queue.PlaybackIntent.STOP, empty.intent)
+        assertEquals(before.version + 1, empty.version)
+        f.add("https://youtu.be/aqz-KE-bpKQ", "clear-second-add", token)
+        assertEquals(first, clear())
+        assertEquals(listOf("aqz-KE-bpKQ"), f.coordinator.currentSnapshot().queueState.items.map { it.videoId })
+        command.put("queueVersion", empty.version)
+        assertEquals("IDEMPOTENCY_KEY_REUSED", JSONObject(clear().body).getString("error"))
+        assertTrue(f.tokenStore.verify(token) != null)
+    }
+
+    @Test
+    fun deletionChecksVersionExplicitStopAndKeepsQueueAndTokens() {
+        val f = Fixture(); val token = f.pair()
+        f.add("https://youtu.be/jNQXAC9IVRw", "delete-add-first", token)
+        val before = f.coordinator.currentSnapshot().queueState
+        val command = JSONObject().put("action", "DELETE").put("videoId", "jNQXAC9IVRw")
+            .put("queueVersion", before.version - 1).put("idempotencyKey", "delete-stale-one")
+        fun send() = f.controller.handle(request("POST", "/api/prepared", f.auth(token), command.toString()))
+        assertEquals(409, send().code)
+        command.put("queueVersion", before.version).put("idempotencyKey", "delete-without-stop")
+        assertEquals("FILE_IN_USE", JSONObject(send().body).getString("error"))
+        assertEquals(before, f.coordinator.currentSnapshot().queueState)
+        command.put("stopPlayback", true).put("idempotencyKey", "delete-with-stop")
+        val first = send()
+        assertEquals(202, first.code)
+        assertEquals(first, send())
+        assertEquals(before.items, f.coordinator.currentSnapshot().queueState.items)
+        assertEquals(dev.siyovush.parentcast.tv.queue.PlaybackIntent.STOP, f.coordinator.currentSnapshot().queueState.intent)
+        assertTrue(f.tokenStore.verify(token) != null)
+        command.put("action", "DELETE_ALL").put("queueVersion", f.coordinator.currentSnapshot().queueState.version)
+            .put("stopPlayback", false).put("idempotencyKey", "delete-all-no-stop")
+        assertEquals("FILE_IN_USE", JSONObject(send().body).getString("error"))
+        command.put("stopPlayback", true).put("idempotencyKey", "delete-all-stopped")
+        assertEquals(202, send().code)
+        command.put("action", "DELETE").put("videoId", "../../devices.json").put("idempotencyKey", "delete-bad-path")
+        assertEquals(400, send().code)
+    }
+
+    @Test
+    fun backgroundPanelAllowsQueueAndStopButDoesNotStartInvisiblePlayback() {
+        val f = Fixture(displayReady = false); val token = f.pair()
+        f.add("https://youtu.be/jNQXAC9IVRw", "background-add", token)
+        val before = f.coordinator.currentSnapshot().queueState
+        val play = JSONObject().put("action", "PLAY").put("idempotencyKey", "background-play")
+        val response = f.controller.handle(request("POST", "/api/playback", f.auth(token), play.toString()))
+        assertEquals(409, response.code)
+        assertEquals("OPEN_PLAYER_ON_TV", JSONObject(response.body).getString("error"))
+        assertEquals(before, f.coordinator.currentSnapshot().queueState)
+        play.put("videoId", "https://youtu.be/aqz-KE-bpKQ").put("idempotencyKey", "background-play-now")
+        assertEquals(409, f.controller.handle(request("POST", "/api/queue/play-now", f.auth(token), play.toString())).code)
+        play.put("action", "STOP").put("idempotencyKey", "background-stop")
+        assertEquals(200, f.controller.handle(request("POST", "/api/playback", f.auth(token), play.toString())).code)
+        assertEquals(false, JSONObject(f.controller.stateBody()).getBoolean("displayReady"))
+    }
+
+    private inner class Fixture(displayReady: Boolean = true) {
         val tokenFile = file("devices.json")
         val tokenStore = AtomicTokenStore(tokenFile)
         val settings = object : PinSettings {
@@ -309,6 +378,7 @@ class ApiControllerTest {
             security = RequestSecurity(setOf("192.168.68.121", "127.0.0.1"), 8765),
             assetLoader = { "<html></html>" },
             prepared = dev.siyovush.parentcast.tv.prepared.PreparedApi(library, coordinator, callDispatcher),
+            displayReady = { displayReady },
         )
 
         fun pair(): String {

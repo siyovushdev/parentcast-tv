@@ -23,18 +23,19 @@ import java.io.IOException
 
 @androidx.annotation.OptIn(UnstableApi::class)
 class Media3PlaybackPlayer(
-    private val playerView: PlayerView,
+    context: android.content.Context,
     private val session: dev.siyovush.parentcast.tv.youtube.YouTubeSession =
         dev.siyovush.parentcast.tv.youtube.DisabledYouTubeSession,
 ) : PlaybackPlayer {
-    private val player = ExoPlayer.Builder(playerView.context).build()
+    private val context = context.applicationContext
+    private var playerView: PlayerView? = null
+    private val player = ExoPlayer.Builder(this.context).build()
     private var listener: PlaybackPlayer.Listener? = null
     private var activeGeneration = 0L
     private var activeVideo: ResolvedVideo? = null
     private var hasRenderedFirstFrame = false
 
     init {
-        playerView.player = player
         player.setAudioAttributes(
             AudioAttributes.Builder()
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
@@ -78,6 +79,15 @@ class Media3PlaybackPlayer(
                 }
             },
         )
+    }
+
+    fun hasVisibleView(): Boolean = playerView?.isAttachedToWindow == true
+    fun attachView(view: PlayerView) {
+        if (playerView !== view) { playerView?.player = null; playerView = view }
+        view.player = player
+    }
+    fun detachView(view: PlayerView) {
+        if (playerView === view) { view.player = null; playerView = null }
     }
 
     override fun setListener(listener: PlaybackPlayer.Listener) {
@@ -125,7 +135,8 @@ class Media3PlaybackPlayer(
         activeGeneration = 0
         activeVideo = null
         listener = null
-        playerView.player = null
+        playerView?.player = null
+        playerView = null
         player.release()
     }
 
@@ -136,7 +147,7 @@ class Media3PlaybackPlayer(
         val isLocal = spec.url.startsWith("file:")
         if (isLocal) {
             val file = java.io.File(java.net.URI(spec.url)).canonicalFile
-            val root = java.io.File(playerView.context.noBackupFilesDir, "prepared-programme").canonicalFile
+            val root = java.io.File(context.noBackupFilesDir, "prepared-programme").canonicalFile
             require(file.parentFile == root && file.name.matches(Regex("[A-Za-z0-9_-]{11}[.](video|audio)[.]mp4")))
         }
         val cookieHeader = if (isLocal) null else dev.siyovush.parentcast.tv.youtube.CookieHeaderCodec.merge(
@@ -151,7 +162,7 @@ class Media3PlaybackPlayer(
             .setUri(spec.url)
             .setMimeType(spec.mimeType)
             .build()
-        return ProgressiveMediaSource.Factory(DefaultDataSource.Factory(playerView.context, dataSource)).createMediaSource(mediaItem)
+        return ProgressiveMediaSource.Factory(DefaultDataSource.Factory(context, dataSource)).createMediaSource(mediaItem)
     }
 
     private fun dispatchDiagnostics() {

@@ -51,6 +51,25 @@
             android:textColor="#8AB4F8"
             android:textSize="16sp" />
 
+        <ImageView
+            android:id="@+id/panelQr"
+            android:layout_width="240dp"
+            android:layout_height="240dp"
+            android:layout_gravity="center_horizontal"
+            android:contentDescription="@string/panel_qr_description" />
+        <Button
+            android:id="@+id/nextPanelAddressButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/panel_next_address" />
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/panel_home_help"
+            android:textColor="#E8EAED"
+            android:textSize="18sp" />
+
+
         <EditText
             android:id="@+id/pinInput"
             android:layout_width="match_parent"

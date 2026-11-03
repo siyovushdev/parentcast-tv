@@ -217,6 +217,18 @@ class PlaybackCoordinator(
         emit()
     }
 
+    fun clearAll(expectedVersion: Long): Boolean {
+        if (closed || state.version != expectedVersion) return false
+        val cleared = QueueState.Empty.copy(version = state.version + 1, batchReceipts = state.batchReceipts)
+        store.write(cleared)
+        state = cleared
+        invalidateRequest()
+        currentTitle = ""; diagnostics = ""; error = null
+        status = PlaybackStatus.STOPPED
+        emit()
+        return true
+    }
+
     fun deletePending(queueItemId: String) {
         if (closed) return
         val updated = state.deletePending(queueItemId)

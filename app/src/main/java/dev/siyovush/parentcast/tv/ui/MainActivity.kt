@@ -78,8 +78,23 @@ open class MainActivity : Activity() {
     private lateinit var sessionStatus: TextView
     private lateinit var pairingManager: PairingManager
     private lateinit var tokenStore: AtomicTokenStore
-    private var httpServer: ParentHttpServer? = null
-    private lateinit var playlistPreviews: PlaylistPreviewManager
+    private var serviceRuntime: dev.siyovush.parentcast.tv.home.ParentCastRuntime? = null
+    private var serviceBound = false
+    private var panelUrlIndex = 0
+    private val runtimeObserver: (CoordinatorSnapshot) -> Unit = { render(it) }
+    private val serviceConnection = object : android.content.ServiceConnection {
+        override fun onServiceConnected(name: android.content.ComponentName, binder: android.os.IBinder) {
+            if (retired) return
+            connectRuntime((binder as dev.siyovush.parentcast.tv.home.ParentCastService.LocalBinder).runtime)
+        }
+        override fun onServiceDisconnected(name: android.content.ComponentName) {
+            ownerReady = false
+            serviceRuntime = null
+            parentGate.lock()
+            playerStatus.text = "Пульт отключён. Откройте ParentCast заново."
+            playerStatus.visibility = View.VISIBLE
+        }
+    }
     private lateinit var pinInput: EditText
     private lateinit var newPinInput: EditText
     private lateinit var pinSaveStatus: TextView
@@ -109,7 +124,7 @@ open class MainActivity : Activity() {
 
     private val savePosition = object : Runnable {
         override fun run() {
-            coordinator.savePosition()
+            if (debugVisible) renderConnectInfo()
             if (debugVisible && !parentGate.authorized()) showPlayer()
             handler.postDelayed(this, SAVE_INTERVAL_MS)
         }
@@ -117,10 +132,8 @@ open class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Android gives a HOME alias a separate task even with a singleTask target activity.
-        // Transfer ownership on the main thread before opening the replacement player/server.
+        // HOME and launcher may create different Activity tasks; the service remains the owner.
         val previous = activeActivity?.get()?.takeIf { it !== this && !it.retired && it.ownerReady }
-        val liveTransfer = previous?.let { !it.isDestroyed && !it.isFinishing } == true
         previous?.let {
             it.retirePlaybackOwner()
             it.finish()
@@ -156,54 +169,33 @@ open class MainActivity : Activity() {
         panelStatus = debugRoot.findViewById(R.id.panelStatus)
         devicesContainer = debugRoot.findViewById(R.id.devicesContainer)
 
-        youTubeSession = dev.siyovush.parentcast.tv.prepared.PreparedRuntime.session(this)
-        val playerView = playerRoot.findViewById<PlayerView>(R.id.playerView)
-        playbackPlayer = Media3PlaybackPlayer(playerView, youTubeSession)
-        preparedLibrary = dev.siyovush.parentcast.tv.prepared.PreparedRuntime.get(this, youTubeSession)
-        coordinator = PlaybackCoordinator(
-            source = dev.siyovush.parentcast.tv.prepared.PreparedYouTubeSource(preparedLibrary, YtDlpYouTubeSource(this, youTubeSession)),
-            store = AtomicQueueStore(File(filesDir, "queue-state.json")),
-            player = playbackPlayer,
-            scope = scope,
-            autoResumeOnStartup = if (liveTransfer) StartupPlaybackPolicy.resumeLiveOwner(previous!!.latestSnapshot)
-                else modeSettings.autoResumeAfterBoot,
-            authorizationGate = {
-                preparedLibrary.snapshot().enabled || !youTubeSession.isSupported || youTubeSession.isEnabled
-            },
-        )
-
-        val addressProvider = LocalAddressProvider()
-        tokenStore = AtomicTokenStore(File(filesDir, "device-tokens.json"))
-        pairingManager = PairingManager(SharedPinSettings(this), tokenStore)
-        playlistPreviews = PlaylistPreviewManager(YtDlpPlaylistSource(this))
-        val dispatcher = object : dev.siyovush.parentcast.tv.web.CallDispatcher {
-            private val main = MainThreadDispatcher(handler)
-            override fun <T> call(block: () -> T): T = main.call {
-                check(!retired) { "Playback owner replaced" }
-                block()
-            }
+        setContentView(playerRoot)
+        window.insetsController?.let { controller ->
+            controller.hide(WindowInsets.Type.systemBars())
+            controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
-        lateinit var apiController: ApiController
-        val playlistApi = PlaylistApi(playlistPreviews,
-            AtomicCollectionStore(File(noBackupFilesDir, "saved-collections.json")),
-            coordinator, dispatcher, { apiController.stateBody() })
-        apiController = ApiController(
-            pairingManager = pairingManager,
-            tokenStore = tokenStore,
-            idempotencyStore = AtomicIdempotencyStore(File(filesDir, "idempotency.json")),
-            coordinator = coordinator,
-            dispatcher = dispatcher,
-            security = RequestSecurity(addressProvider.panelHosts(), PANEL_PORT),
-            assetLoader = { path -> assets.open(path).bufferedReader().use { it.readText() } },
-            playlists = playlistApi,
-            prepared = dev.siyovush.parentcast.tv.prepared.PreparedApi(preparedLibrary, coordinator, dispatcher),
-        )
+        val serviceIntent = android.content.Intent(this, dev.siyovush.parentcast.tv.home.ParentCastService::class.java)
         try {
-            httpServer = ParentHttpServer(PANEL_PORT, apiController).apply { start(5_000, true) }
-            panelStatus.text = panelText(addressProvider.panelHosts())
-        } catch (error: Exception) {
-            panelStatus.text = "HTTP server error: ${error.javaClass.simpleName}"
+            startForegroundService(serviceIntent)
+            serviceBound = bindService(serviceIntent, serviceConnection, android.content.Context.BIND_AUTO_CREATE)
+        } catch (_: Exception) { playerStatus.text = "Не удалось включить домашний пульт. Откройте ParentCast заново." }
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1101)
         }
+    }
+
+    private fun connectRuntime(runtime: dev.siyovush.parentcast.tv.home.ParentCastRuntime) {
+        serviceRuntime = runtime
+        youTubeSession = runtime.session
+        playbackPlayer = runtime.player
+        coordinator = runtime.coordinator
+        preparedLibrary = runtime.prepared
+        tokenStore = runtime.tokens
+        pairingManager = runtime.pairing
+        runtime.attachDisplay(playerRoot.findViewById(R.id.playerView))
+        ownerReady = true
+        renderConnectInfo()
+        debugRoot.findViewById<Button>(R.id.nextPanelAddressButton).setOnClickListener { if (requireParent()) { panelUrlIndex++; renderConnectInfo() } }
         savePinButton.setOnClickListener { savePin() }
         renderPinUi()
         configureParentModeControls()
@@ -227,21 +219,12 @@ open class MainActivity : Activity() {
             disableSession()
         }
 
-        setContentView(playerRoot)
-        window.insetsController?.let { controller ->
-            controller.hide(WindowInsets.Type.systemBars())
-            controller.systemBarsBehavior =
-                WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        }
-        ownerReady = true
-        coordinator.setListener(::render)
-        coordinator.start()
-        preparedLibrary.resumePending()
+        runtime.observe(runtimeObserver)
         handler.postDelayed(savePosition, SAVE_INTERVAL_MS)
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (retired) return true
+        if (retired || !ownerReady) return true
         if (debugVisible && !parentGate.authorized()) { showPlayer(); return true }
         if (!debugVisible && parentDialog == null) {
             if (event.keyCode in setOf(KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_DPAD_CENTER)) {
@@ -276,12 +259,18 @@ open class MainActivity : Activity() {
         super.onResume()
         if (retired) return
         foreground = true
+        if (ownerReady) serviceRuntime?.attachDisplay(playerRoot.findViewById(R.id.playerView))
         if (!isPrivilegedKioskTask && checkPrivilegedRecovery()) return
         if (::deviceMode.isInitialized && modeSettings.childEnabled && !isPrivilegedKioskTask) {
             val snapshot = deviceMode.snapshot()
             if (snapshot.isDefaultHome && snapshot.recoveryAvailable && !parentGate.authorized()) deviceMode.startChildLockTask()
         }
         if (::debugRoot.isInitialized && debugVisible) renderModeUi()
+    }
+
+    override fun onStop() {
+        serviceRuntime?.detachDisplay(playerRoot.findViewById(R.id.playerView), pause = true)
+        super.onStop()
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -292,6 +281,7 @@ open class MainActivity : Activity() {
     }
 
     private fun handleParentBack() {
+        if (!ownerReady) return
         if (parentDialog != null) parentDialog?.dismiss() else if (debugVisible) showPlayer()
         // Leaving the player requires the authenticated Launcher exit, including when HOME is off.
     }
@@ -308,7 +298,7 @@ open class MainActivity : Activity() {
         parentGate.lock()
         parentDialog?.dismiss()
         if (debugVisible) showPlayer()
-        coordinator.savePosition()
+        if (ownerReady) coordinator.savePosition()
         super.onPause()
     }
 
@@ -320,13 +310,11 @@ open class MainActivity : Activity() {
         parentGate.lock()
         parentDialog?.dismiss()
         handler.removeCallbacksAndMessages(null)
-        httpServer?.stop()
-        playlistPreviews.close()
-        try { coordinator.savePosition() } finally {
-            coordinator.close()
-            playbackPlayer.release()
-            scope.cancel()
-        }
+        serviceRuntime?.unobserve(runtimeObserver)
+        serviceRuntime?.detachDisplay(playerRoot.findViewById(R.id.playerView), pause = false)
+        serviceRuntime = null
+        if (serviceBound) { unbindService(serviceConnection); serviceBound = false }
+        scope.cancel()
     }
 
     override fun onDestroy() {
@@ -444,6 +432,23 @@ open class MainActivity : Activity() {
                     if (requireParent()) { tokenStore.revoke(device.deviceId); renderDevices() }
                 }
             })
+        }
+    }
+
+    private fun renderConnectInfo() {
+        val runtime = serviceRuntime ?: return
+        val urls = runtime.network.urls()
+        panelStatus.text = if (runtime.serverError) "Пульт не удалось включить. Откройте приложение заново."
+            else if (urls.isEmpty()) "Подключите приставку к домашнему Wi-Fi или кабелю."
+            else "Пульт для телефона и компьютера:\n" + urls.joinToString("\n")
+        val preferred = urls.getOrNull(if (urls.isEmpty()) 0 else panelUrlIndex % urls.size) ?: return
+        val image = debugRoot.findViewById<android.widget.ImageView>(R.id.panelQr)
+        if (image.tag != preferred) {
+            val matrix = dev.siyovush.parentcast.tv.home.panelQrMatrix(preferred)
+            image.contentDescription = "QR родительского пульта: $preferred"
+            val pixels = IntArray(320 * 320) { i -> if (matrix[i % 320, i / 320]) android.graphics.Color.BLACK else android.graphics.Color.WHITE }
+            image.setImageBitmap(android.graphics.Bitmap.createBitmap(pixels, 320, 320, android.graphics.Bitmap.Config.ARGB_8888))
+            image.tag = preferred
         }
     }
 
@@ -588,7 +593,7 @@ open class MainActivity : Activity() {
         val snapshot = currentDeviceMode()
         return PrivilegedModeRequirements(
             isSystemApp = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0,
-            pinConfigured = pairingManager.hasPin(), recoveryAvailable = snapshot.recoveryAvailable,
+            pinConfigured = ::pairingManager.isInitialized && pairingManager.hasPin(), recoveryAvailable = snapshot.recoveryAvailable,
             isParentCastHome = snapshot.isDefaultHome, isForeground = foreground,
         )
     }
@@ -671,10 +676,7 @@ open class MainActivity : Activity() {
 
     private fun render(snapshot: CoordinatorSnapshot) {
         latestSnapshot = snapshot
-        if (::preparedLibrary.isInitialized) {
-            val q = snapshot.queueState
-            preparedLibrary.schedule(q.items.drop(q.currentIndex.coerceAtLeast(0)).map { it.videoId })
-        }
+        if (!ownerReady || retired) return
         val playerMessage = when (snapshot.status) {
             PlaybackStatus.IDLE -> getString(R.string.player_waiting)
             PlaybackStatus.WAITING_FOR_SESSION -> getString(R.string.player_waiting_session)
