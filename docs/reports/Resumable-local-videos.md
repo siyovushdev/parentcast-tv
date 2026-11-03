@@ -91,31 +91,47 @@ ApplicationId `dev.siyovush.parentcast.tv.debug`; versionCode7, versionName0.1.0
 `de2cf22c47b6e4039da04107631b31d92ecddeb6984eeae5d43107337cceecf8`.
 Нет PrivilegedKioskActivity/ALWAYS в обычном manifest; platform-ключ не используется.
 
-## H728 — приёмка пока не завершена
+## H728 и реальный Chrome
 
-Цель подтверждена read-only: H728 Android14, serial…84201a; rk3568 не использовалась.
-В начале очередь20 элементов, версия53, PAUSE; владелец выполняет реальные загрузки.
-Готовый пользовательский ролик сохранён, следующий большой ролик продолжает передачу старой
-версией. Установка сейчас прервёт старую передачу: старый downloader не сохранял validator,
-поэтому безопасно объявить её докачиваемой новым кодом нельзя. Выбор «ждать завершения /
-обновить сейчас с повторной загрузкой» задан владельцу; до ответа выбран безопасный путь
-сохранения текущей загрузки. Все независимые код/тесты/сборка подготовлены.
+Цель повторно подтверждена read-only: SoC h728, Android14, serial…84201a. rk3568 не
+использовалась. Обычный versionCode7 установлен через `adb -s <H728> install -r` без очистки.
+Владелец разрешил обновить сразу с повторной загрузкой незавершённого старого ролика.
+До установки старая передача сама завершилась ошибкой; следующая была ещё в INFO/0 bytes.
+Готовый пользовательский YouTube-файл206493895 bytes не удалялся.
 
-На устройстве найдена штатная DocumentsUI для OPEN_DOCUMENT_TREE. Физической USB пока нет:
-sm list-volumes показывает только private/emulated. Владелец получил запрос подключить флешку.
-
-| Сценарий нового APK | Статус | Причина |
+| Сценарий | Статус | Свидетельство |
 |---|---|---|
-| Update без очистки | NOT_RUN | Ожидается безопасная граница текущей старой передачи либо выбор владельца |
-| Реальный YouTube Range/retry на H728 | NOT_RUN | Новый APK пока не установлен; HTTP fixture не подменяет эту проверку |
-| Browser upload → Android validation → local playback | NOT_RUN | Готов тестовый MP4 из собственных прежних демонстрационных video/audio, требуется update |
-| Реальный порядок очереди на H728 | NOT_RUN | До update доступны только прежние команды; новые покрыты JVM/frontend fixture |
-| Реальный USB import/извлечение | NOT_RUN | Нужна физическая флешка и grant папки через штатный UI |
-| Reboot/Happ/DO/privileged/system | NOT_RUN | Не разрешены в этом задании, не выполнялись |
+| Update и сохранение данных | PASS |20 исходных queueItemId/videoId в исходном порядке, currentIndex13/position0; SHA256 родительских настроек, session и device-tokens совпали с baseline |
+| Browser upload → Android validation | PASS | Настоящий raw HTTP upload744413 bytes, Android validation, READY/duration20; очередь/version/intent не изменились |
+| Chrome: библиотека/выбор/добавление | PASS | Реальная панель `.local:8765`, checkbox, явное добавление двух временных local-строк; PLAY не вызван |
+| Chrome: изменение порядка | PASS | До «Сохранить» API порядок прежний; после сохранения версия55→56, переставлены только две временные строки, текущий/позиция/PAUSE сохранены |
+| Pause/resume с YouTube | PASS | Первый ролик получил950272 bytes; PAUSE сохранил partial. Свежий resolve, реальный CDN206: `ParentCastTransfer: RESUMED_206 offset=950272`, затем2072576 bytes |
+| Перезапуск процесса | PASS | Force-stop/start только ParentCast, без reboot:20 строк, STOP, сохранённый SAF grant и все три auth-digest сохранены; подготовка возобновилась, реальный206 с2506736 bytes |
+| Автоматический retry после разрыва HTTP | PASS (синтетический сервер) | MockWebServer + worker/backoff tests; реальный VPN/сетевой сбой на H728 намеренно не вызывался, не выдаётся за испытание YouTube |
+| Штатный SAF grant/копирование | PASS (внутренняя папка) | Действующий PIN принят; DocumentsUI READ-grant только Movies/ParentCast-check. API и Chrome показывают файл744413 bytes; отмеченный файл скопирован и проверен, очередь20/STOP не изменилась |
+| Физический USB/извлечение | NOT_RUN | Только private/emulated volumes; владелец сможет подключить флешку завтра. Unit fixture и внутренняя папка не подменяют USB |
+| File picker в автоматизированном Chrome | NOT_RUN | Extension не имеет «Allow access to file URLs»; настройки расширения не менялись. Сам endpoint проверен настоящим HTTP, дальнейший UI — Chrome |
+| Local playback со звуком | FAIL | Видна первая картинка H.264/AAC, но Media3 actual position остаётся0 после7–9 секунд и PAUSE; удалённый SHA файла совпал с исходным |
+| Диагностика аудиотракта | UNKNOWN, аппаратный блокер | Video-only файл прошёл7603ms. AAC44100 и48000 stereo стоят на0; прежний готовый YouTube с отдельными дорожками также стоит на0. AudioFlinger HDMI mixer не совершает write несколько миллионов ms, server frames0 также у другого приложения. Это не доказанная регрессия local import |
+| Reboot/Happ/DO/privileged/system | NOT_RUN | Не выполнялись |
 
-PIN/cookies/токены/очередь/готовые файлы не сбрасывались. На этом этапе новая версия **не
-выдаётся за установленную или аппаратно принятую**. Следующий шаг — безопасный update и
-реальная приёмка, затем дополнение этого отчёта; Merge не выполнять.
+Для контроля проигрывания использованы свои прежние демонстрационные video/audio, отдельно
+созданы video-only и48kHz stereo варианты. Не объявляем статус PLAYING доказательством просмотра:
+проверялись реальная позиция после PAUSE и кадры экрана. Причина остановившегося HDMI-аудиотракта
+пока не установлена. RustDesk активен; временная остановка его захвата предложена владельцу как
+отдельная проверка, без ответа не выполнялась. Media3, системное аудио и Happ не менялись.
+
+После каждого теста временные queue-строки удалены, исходные20 строк/текущий/позиция восстановлены,
+намерение STOP. Тестовые файлы удалены; доступ к внутренней тестовой папке отозван через родительское меню.
+Штатный Launcher открыт, child=false/auto-resume=false, STOP; подготовка продолжается в фоне.
+PIN/cookies/токены/готовые пользовательские видео не сбрасывались. Секреты и персональные дампы
+не опубликованы. Локальные свидетельства лежат в игнорируемом `artifacts/resume-local-videos`:
+`upload-real.json`, `sort-real.json`, `saf-real.json`, `range-pause.json`, `range-resume-real.json`,
+`process-restart.json`, `final-state.json`, `local-compare.json`, `ready-youtube-control.json` и кадры экрана.
+
+**Приёмка просмотра пока не завершена** из-за аудиотракта H728; кодовые проверки, импорт,
+порядок и реальная докачка выполнены. Физический USB перенесён по явному ответу владельца.
+Draft PR #10 остаётся Draft, без Merge/Release.
 
 Механизмы: [HTTP Range/If-Range/validators, RFC9110](https://www.rfc-editor.org/rfc/rfc9110.html),
 [Android SAF и USB providers](https://developer.android.com/guide/topics/providers/document-provider),
