@@ -154,7 +154,7 @@ function renderPrepared() {
     rows.replaceChildren();
     const names = {WAITING: "В очереди загрузки", DOWNLOADING: "Скачивание", READY: "Готово", ERROR: "Ошибка", DELETED: "Файл удалён", DELETING: "Удаляем файл"};
     const phases = {INFO: "Получаем данные о ролике", VIDEO: "Загружаем видео", AUDIO: "Загружаем звук", VERIFY: "Проверяем загрузку"};
-    const errors = {YOUTUBE_AUTH_REQUIRED: "YouTube требует авторизацию. Включите действующую тестовую сессию на ТВ и повторите подготовку", NO_SPACE: "Недостаточно места в лимите / свободного места", UNSUPPORTED: "Нужен публичный завершённый ролик", DOWNLOAD_FAILED: "Загрузка не завершена. Проверьте сеть и повторите", FILE_DAMAGED: "Файл повреждён. Повторите загрузку"};
+    const errors = {YOUTUBE_AUTH_REQUIRED: "YouTube требует авторизацию. Включите действующую тестовую сессию на ТВ и повторите подготовку", NO_SPACE: "Недостаточно места в лимите / свободного места", UNSUPPORTED: "Нужен публичный завершённый ролик", DOWNLOAD_FAILED: "Загрузка прервана. Проверьте сеть и нажмите «Повторить ошибки»", FILE_DAMAGED: "Файл повреждён. Повторите загрузку"};
     s.entries.forEach(e => {
         const row = document.createElement("div");
         row.className = "download-row";
@@ -166,6 +166,7 @@ function renderPrepared() {
         progress.max = 100;
         if (known) progress.value = e.percent;
         else progress.removeAttribute("value");
+        progress.hidden = !known && e.status !== "DOWNLOADING";
         progress.setAttribute("aria-label", `Готовность ролика ${e.index}`);
         row.append(label, progress);
         if (e.status === "READY" || e.status === "DOWNLOADING") row.append(preparedDeleteButton(e.videoId));
