@@ -30,11 +30,20 @@
         <nav class="section-nav" aria-label="Разделы пульта">
             <a href="#queueSection">Моя программа</a><a href="#addYoutubeSection">YouTube / VK</a><a href="#playlistHeading">Плейлисты</a><a href="#localSection">Свои видео / USB</a><a href="#downloadsSection">Загрузки</a>
         </nav>
+        <div class="section-tools controls" aria-label="Вид разделов">
+            <button type="button" id="collapseSections" class="secondary">Свернуть все блоки</button>
+            <button type="button" id="expandSections" class="secondary">Развернуть все блоки</button>
+        </div>
         <section class="card" aria-labelledby="homeConnectHeading">
-            <h2 id="homeConnectHeading">Пульт для всей семьи</h2>
-            <p>Для другого телефона: откройте QR-код в родительском меню на ТВ, введите PIN один раз и сохраните страницу в избранное или на главный экран.</p>
-            <p id="homeConnectUrls" class="muted"></p>
-            <p class="muted">Телефон и приставка должны быть в одной домашней сети. Гостевая Wi-Fi может быть изолирована. Если VPN или прокси перехватывает домашние адреса, добавьте домашнюю сеть в его исключения. После принудительной остановки приложения откройте ParentCast на ТВ.</p>
+            <details class="section-panel" data-section="home" open>
+                <summary><h2 id="homeConnectHeading">Пульт для всей семьи</h2></summary>
+                <div class="section-body">
+                    <p>Для другого телефона: откройте QR-код в родительском меню на ТВ, введите PIN один раз и сохраните страницу в избранное или на главный экран.</p>
+                    <p id="homeConnectUrls" class="muted"></p>
+                    <p class="muted">Телефон и приставка должны быть в одной домашней сети. Гостевая Wi-Fi может быть изолирована. Если VPN или прокси перехватывает домашние адреса, добавьте домашнюю сеть в его исключения. После принудительной остановки приложения откройте ParentCast на ТВ.</p>
+                    <button type="button" class="secondary section-close" data-section-close>Свернуть блок ↑</button>
+                </div>
+            </details>
         </section>
 
         <section class="card">
@@ -55,125 +64,168 @@
         </section>
 
         <section id="downloadsSection" class="card" aria-labelledby="preparedHeading">
-            <h2 id="preparedHeading">Загрузки YouTube / VK</h2>
-            <p class="muted">Заранее скачайте ролики YouTube и VK из вашей программы. Свои видео уже доступны офлайн. В этом режиме показываются только полностью готовые файлы; следующие загружаются во время просмотра. Включение не запускает и не останавливает текущий ролик, режим применяется при следующем запуске.</p>
-            <p class="muted">Лимит 10 ГиБ, резерв свободного места 1 ГиБ. Если следующий ролик не готов, придётся подождать. При обрыве сеть будет проверена автоматически. Часть файла сохраняется; докачка зависит от ответа сервера.</p>
-            <p id="preparedSummary" role="status">Нет данных</p>
-            <p id="preparedStorage" class="muted"></p>
-            <div class="actions">
-                <button data-prepared="ENABLE">Подготовить очередь / продолжить</button>
-                <button data-prepared="PAUSE" class="secondary">Остановить подготовку</button>
-                <button data-prepared="RETRY" class="secondary">Повторить ошибки</button>
-                <button data-prepared="CLEANUP" class="secondary">Удалить файлы вне очереди</button>
-                <button data-prepared="RETRY_DELETE" class="secondary" hidden>Повторить удаление</button>
-                <button data-prepared="DELETE_ALL" class="danger">Удалить все скачанные файлы</button>
-                <button data-prepared="DISABLE" class="secondary">Вернуться к потоковому режиму</button>
-            </div>
-            <p id="preparedMessage" class="message"></p>
-            <div id="preparedEntries"></div>
-            <details><summary>Все готовые файлы на приставке</summary><div id="preparedFiles"></div></details>
+            <details class="section-panel" data-section="downloads" open>
+                <summary><h2 id="preparedHeading">Загрузки YouTube / VK</h2></summary>
+                <div class="section-body">
+                    <p class="muted">Заранее скачайте ролики YouTube и VK из вашей программы. Свои видео уже доступны офлайн. В этом режиме показываются только полностью готовые файлы; следующие загружаются во время просмотра. Включение не запускает и не останавливает текущий ролик, режим применяется при следующем запуске.</p>
+                    <p class="muted">Лимит 10 ГиБ, резерв свободного места 1 ГиБ. Если следующий ролик не готов, придётся подождать. При обрыве сеть будет проверена автоматически. Часть файла сохраняется; докачка зависит от ответа сервера.</p>
+                    <p id="preparedSummary" role="status">Нет данных</p>
+                    <p id="preparedStorage" class="muted"></p>
+                    <div class="actions">
+                        <button data-prepared="ENABLE">Подготовить очередь / продолжить</button>
+                        <button data-prepared="PAUSE" class="secondary">Остановить подготовку</button>
+                        <button data-prepared="RETRY" class="secondary">Повторить ошибки</button>
+                        <button data-prepared="CLEANUP" class="secondary">Удалить файлы вне очереди</button>
+                        <button data-prepared="RETRY_DELETE" class="secondary" hidden>Повторить удаление</button>
+                        <button data-prepared="DELETE_ALL" class="danger">Удалить все скачанные файлы</button>
+                        <button data-prepared="DISABLE" class="secondary">Вернуться к потоковому режиму</button>
+                    </div>
+                    <p id="preparedMessage" class="message"></p>
+                    <div id="preparedEntries"></div>
+                    <details><summary>Все готовые файлы на приставке</summary><div id="preparedFiles"></div></details>
+                    <button type="button" class="secondary section-close" data-section-close>Свернуть блок ↑</button>
+                </div>
+            </details>
         </section>
 
         <section class="card">
-            <h2>Включить сейчас</h2>
-            <label>Ссылка YouTube или VK <input id="playNowLink" type="url" autocomplete="off" placeholder="https://youtu.be/…"></label>
-            <button id="playNowButton">Включить сейчас</button>
+            <details class="section-panel" data-section="play-now" open>
+                <summary><h2>Включить сейчас</h2></summary>
+                <div class="section-body">
+                    <label>Ссылка YouTube или VK <input id="playNowLink" type="url" autocomplete="off" placeholder="https://youtu.be/…"></label>
+                    <button id="playNowButton">Включить сейчас</button>
+                    <button type="button" class="secondary section-close" data-section-close>Свернуть блок ↑</button>
+                </div>
+            </details>
         </section>
 
         <section class="card">
-            <h2 id="addYoutubeSection">Добавить видео YouTube / VK</h2>
-            <p class="muted">По одной ссылке на строку. Добавление не запускает воспроизведение. VK принимается без входа в аккаунт; перед просмотром нажмите «Подготовить очередь / продолжить» и дождитесь готовности.</p>
-            <textarea id="links" rows="4" placeholder="https://www.youtube.com/watch?v=…&#10;https://youtu.be/…"></textarea>
-            <button id="addButton">Добавить</button>
-            <p id="commandMessage" class="message"></p>
-            <button id="retryCommandButton" class="secondary" hidden>Повторить последнюю команду</button>
+            <details class="section-panel" data-section="add-links" open>
+                <summary><h2 id="addYoutubeSection">Добавить видео YouTube / VK</h2></summary>
+                <div class="section-body">
+                    <p class="muted">По одной ссылке на строку. Добавление не запускает воспроизведение. VK принимается без входа в аккаунт; перед просмотром нажмите «Подготовить очередь / продолжить» и дождитесь готовности.</p>
+                    <textarea id="links" rows="4" placeholder="https://www.youtube.com/watch?v=…&#10;https://youtu.be/…"></textarea>
+                    <button id="addButton">Добавить</button>
+                    <p id="commandMessage" class="message"></p>
+                    <button id="retryCommandButton" class="secondary" hidden>Повторить последнюю команду</button>
+                    <button type="button" class="secondary section-close" data-section-close>Свернуть блок ↑</button>
+                </div>
+            </details>
         </section>
 
         <section class="card">
-            <div class="row">
-                <h2 id="queueSection">Моя программа</h2>
-                <button id="clearAllButton" class="danger">Очистить всю очередь</button>
-                <button id="clearPendingButton" class="secondary">Удалить только ожидающие</button>
-            </div>
-            <p class="muted">Полная очистка останавливает ролик и удаляет текущий, ожидающие и историю очереди. Скачанные файлы и сохранённые подборки остаются.</p>
-            <p class="muted">Порядок меняется только у ожидающих роликов. Текущий ролик продолжает работать.</p>
-            <button id="editQueueOrder" class="secondary">Изменить порядок</button>
-            <div id="queueOrderTools" class="sort-tools" hidden>
-                <label>Быстрая сортировка <select id="queueSortMode"><option value="title">По названию А–Я</option><option value="title-desc">По названию Я–А</option><option value="ready">Сначала готовые офлайн</option><option value="reverse">Обратный порядок</option></select></label>
-                <button id="queueSortButton" class="secondary">Отсортировать список</button>
-                <p class="muted">Перетаскивайте мышью или используйте стрелки и номер позиции. Пока не нажата кнопка «Сохранить порядок», очередь не меняется.</p>
-                <button id="queueOrderApply">Сохранить порядок</button><button id="queueOrderCancel" class="secondary">Отменить</button>
-            </div>
-            <p id="queueOrderMessage" class="message" role="status"></p>
-            <div id="queue"></div>
+            <details class="section-panel" data-section="queue" open>
+                <summary><h2 id="queueSection">Моя программа</h2></summary>
+                <div class="section-body">
+                    <div class="row">
+
+                        <button id="clearAllButton" class="danger">Очистить всю очередь</button>
+                        <button id="clearPendingButton" class="secondary">Удалить только ожидающие</button>
+                    </div>
+                    <p class="muted">Полная очистка останавливает ролик и удаляет текущий, ожидающие и историю очереди. Скачанные файлы и сохранённые подборки остаются.</p>
+                    <p class="muted">Порядок меняется только у ожидающих роликов. Текущий ролик продолжает работать.</p>
+                    <button id="editQueueOrder" class="secondary">Изменить порядок</button>
+                    <div id="queueOrderTools" class="sort-tools" hidden>
+                        <label>Быстрая сортировка <select id="queueSortMode"><option value="title">По названию А–Я</option><option value="title-desc">По названию Я–А</option><option value="ready">Сначала готовые офлайн</option><option value="reverse">Обратный порядок</option></select></label>
+                        <button id="queueSortButton" class="secondary">Отсортировать список</button>
+                        <p class="muted">Перетаскивайте мышью или используйте стрелки и номер позиции. Пока не нажата кнопка «Сохранить порядок», очередь не меняется.</p>
+                        <button id="queueOrderApply">Сохранить порядок</button><button id="queueOrderCancel" class="secondary">Отменить</button>
+                    </div>
+                    <p id="queueOrderMessage" class="message" role="status"></p>
+                    <div id="queue"></div>
+                    <button type="button" class="secondary section-close" data-section-close>Свернуть блок ↑</button>
+                </div>
+            </details>
         </section>
 
         <section id="localSection" class="card" aria-labelledby="localHeading">
-            <h2 id="localHeading">Свои видео — без интернета</h2>
-            <p>Скопируйте видео с телефона, компьютера или флешки. После проверки оно останется на приставке. Импорт не добавляет ролик в программу и не запускает просмотр.</p>
-            <details><summary>С телефона / компьютера / подключённой к нему флешки</summary>
-                <label>Выберите видео <input id="localFilesInput" type="file" accept="video/*,.mkv,.webm,.mp4,.m4v,.mov,.3gp" multiple></label>
-                <button id="uploadLocalButton">Скопировать на приставку</button><button id="cancelUploadButton" class="secondary" hidden>Отменить передачу</button>
-                <progress id="localUploadProgress" max="100" value="0" hidden></progress><p id="localUploadMessage" class="message" role="status" aria-live="polite"></p>
+            <details class="section-panel" data-section="local" open>
+                <summary><h2 id="localHeading">Свои видео — без интернета</h2></summary>
+                <div class="section-body">
+                    <p>Скопируйте видео с телефона, компьютера или флешки. После проверки оно останется на приставке. Импорт не добавляет ролик в программу и не запускает просмотр.</p>
+                    <details><summary>С телефона / компьютера / подключённой к нему флешки</summary>
+                        <label>Выберите видео <input id="localFilesInput" type="file" accept="video/*,.mkv,.webm,.mp4,.m4v,.mov,.3gp" multiple></label>
+                        <button id="uploadLocalButton">Скопировать на приставку</button><button id="cancelUploadButton" class="secondary" hidden>Отменить передачу</button>
+                        <progress id="localUploadProgress" max="100" value="0" hidden></progress><p id="localUploadMessage" class="message" role="status" aria-live="polite"></p>
+                    </details>
+                    <details><summary>Флешка, вставленная в приставку</summary>
+                        <p>Вставьте флешку в ТВ-приставку. Один раз в родительском меню на ТВ нажмите «Выбрать папку USB / локальных видео» и разрешите чтение нужной папки. Затем выберите файлы здесь.</p>
+                        <button id="usbRefreshButton" class="secondary">Открыть USB-папку</button><button id="usbBackButton" class="secondary" hidden>Назад</button>
+                        <p id="usbMessage" class="message" role="status"></p><div id="usbFiles"></div>
+                        <button id="usbImportButton" disabled>Скопировать выбранные на приставку</button>
+                    </details>
+                    <p class="muted">Общий лимит с YouTube и VK — 10 ГиБ; свободный резерв — 1 ГиБ. Поддерживаются MP4/MKV/WebM/3GP с кодеками приставки, без DRM. Исходные файлы не изменяются.</p>
+                    <div id="localImportJobs"></div>
+                    <div class="row"><h3>Уже на приставке</h3><button id="localRefreshButton" class="secondary">Обновить</button></div>
+                    <div class="controls"><button id="localSelectAll" class="secondary">Выбрать все</button><button id="localSelectNone" class="secondary">Снять выбор</button><button id="localAddSelected" disabled>Добавить выбранные в программу</button></div>
+                    <p id="localMessage" class="message" role="status"></p><div id="localLibrary"></div>
+                    <button type="button" class="secondary section-close" data-section-close>Свернуть блок ↑</button>
+                </div>
             </details>
-            <details><summary>Флешка, вставленная в приставку</summary>
-                <p>Вставьте флешку в ТВ-приставку. Один раз в родительском меню на ТВ нажмите «Выбрать папку USB / локальных видео» и разрешите чтение нужной папки. Затем выберите файлы здесь.</p>
-                <button id="usbRefreshButton" class="secondary">Открыть USB-папку</button><button id="usbBackButton" class="secondary" hidden>Назад</button>
-                <p id="usbMessage" class="message" role="status"></p><div id="usbFiles"></div>
-                <button id="usbImportButton" disabled>Скопировать выбранные на приставку</button>
-            </details>
-            <p class="muted">Общий лимит с YouTube и VK — 10 ГиБ; свободный резерв — 1 ГиБ. Поддерживаются MP4/MKV/WebM/3GP с кодеками приставки, без DRM. Исходные файлы не изменяются.</p>
-            <div id="localImportJobs"></div>
-            <div class="row"><h3>Уже на приставке</h3><button id="localRefreshButton" class="secondary">Обновить</button></div>
-            <div class="controls"><button id="localSelectAll" class="secondary">Выбрать все</button><button id="localSelectNone" class="secondary">Снять выбор</button><button id="localAddSelected" disabled>Добавить выбранные в программу</button></div>
-            <p id="localMessage" class="message" role="status"></p><div id="localLibrary"></div>
         </section>
 
         <section class="card" aria-labelledby="playlistHeading">
-            <h2 id="playlistHeading">Импорт плейлиста YouTube / VK</h2>
-            <p class="muted">Публичный статический плейлист YouTube или доступный без входа VK, до 500 элементов. Предпросмотр и выбор не меняют очередь. Добавление не запускает воспроизведение.</p>
-            <label>Ссылка на плейлист <input id="playlistUrl" type="url" autocomplete="off" maxlength="2048" placeholder="https://www.youtube.com/playlist?list=…"></label>
-            <div class="controls">
-                <button id="playlistPreviewButton">Получить предпросмотр</button>
-                <button id="playlistCancelButton" class="secondary" hidden>Отменить предпросмотр</button>
-            </div>
-            <p id="playlistMessage" class="message" role="status" aria-live="polite"></p>
-            <div id="playlistPreview" hidden>
-                <h3 id="playlistTitle"></h3>
-                <p id="playlistCount" class="muted"></p>
-                <div id="playlistSelection" class="controls" hidden>
-                    <button id="playlistSelectAllButton" class="secondary">Выбрать все доступные</button>
-                    <button id="playlistSelectNoneButton" class="secondary">Снять выбор</button>
-                    <span id="playlistSelectedCount" class="muted"></span>
+            <details class="section-panel" data-section="playlist" open>
+                <summary><h2 id="playlistHeading">Импорт плейлиста YouTube / VK</h2></summary>
+                <div class="section-body">
+                    <p class="muted">Публичный статический плейлист YouTube или доступный без входа VK, до 500 элементов. Предпросмотр и выбор не меняют очередь. Добавление не запускает воспроизведение.</p>
+                    <label>Ссылка на плейлист <input id="playlistUrl" type="url" autocomplete="off" maxlength="2048" placeholder="https://www.youtube.com/playlist?list=…"></label>
+                    <div class="controls">
+                        <button id="playlistPreviewButton">Получить предпросмотр</button>
+                        <button id="playlistCancelButton" class="secondary" hidden>Отменить предпросмотр</button>
+                    </div>
+                    <p id="playlistMessage" class="message" role="status" aria-live="polite"></p>
+                    <div id="playlistPreview" hidden>
+                        <h3 id="playlistTitle"></h3>
+                        <p id="playlistCount" class="muted"></p>
+                        <div id="playlistSelection" class="controls" hidden>
+                            <button id="playlistSelectAllButton" class="secondary">Выбрать все доступные</button>
+                            <button id="playlistSelectNoneButton" class="secondary">Снять выбор</button>
+                            <span id="playlistSelectedCount" class="muted"></span>
+                        </div>
+                        <p class="muted small">«Доступность не проверена» означает, что список содержит ролик, но возможность воспроизведения пока не подтверждена. Эфиры, премьеры и ограниченный доступ не поддерживаются.</p>
+                        <div id="playlistEntries" class="playlist-entries"></div>
+                        <div id="playlistConfirm" hidden>
+                            <p id="playlistPartialNotice" class="error" hidden>PARTIAL: получена только часть плейлиста. Будут добавлены или сохранены только отмеченные элементы из полученной части.</p>
+                            <button id="playlistApplyButton" disabled>Добавить выбранные</button>
+                            <label>Название сохранённой подборки <input id="collectionName" autocomplete="off" maxlength="100" placeholder="Например, вечерняя программа"></label>
+                            <button id="collectionSaveButton" class="secondary" disabled>Сохранить выбранные как подборку</button>
+                            <p class="muted small">Сохраняется фиксированный список videoId в указанном порядке на приставке. Новые видео автора не добавятся. Сохранение не меняет очередь.</p>
+                        </div>
+                    </div>
+                    <button type="button" class="secondary section-close" data-section-close>Свернуть блок ↑</button>
                 </div>
-                <p class="muted small">«Доступность не проверена» означает, что список содержит ролик, но возможность воспроизведения пока не подтверждена. Эфиры, премьеры и ограниченный доступ не поддерживаются.</p>
-                <div id="playlistEntries" class="playlist-entries"></div>
-                <div id="playlistConfirm" hidden>
-                    <p id="playlistPartialNotice" class="error" hidden>PARTIAL: получена только часть плейлиста. Будут добавлены или сохранены только отмеченные элементы из полученной части.</p>
-                    <button id="playlistApplyButton" disabled>Добавить выбранные</button>
-                    <label>Название сохранённой подборки <input id="collectionName" autocomplete="off" maxlength="100" placeholder="Например, вечерняя программа"></label>
-                    <button id="collectionSaveButton" class="secondary" disabled>Сохранить выбранные как подборку</button>
-                    <p class="muted small">Сохраняется фиксированный список videoId в указанном порядке на приставке. Новые видео автора не добавятся. Сохранение не меняет очередь.</p>
-                </div>
-            </div>
+            </details>
         </section>
 
         <section class="card" aria-labelledby="collectionsHeading">
-            <div class="row">
-                <h2 id="collectionsHeading">Сохранённые подборки</h2>
-                <button id="collectionsRefreshButton" class="secondary">Обновить</button>
-            </div>
-            <p id="collectionsMessage" class="message" role="status" aria-live="polite"></p>
-            <div id="collections"></div>
+            <details class="section-panel" data-section="collections" open>
+                <summary><h2 id="collectionsHeading">Сохранённые подборки</h2></summary>
+                <div class="section-body">
+                    <div class="row">
+
+                        <button id="collectionsRefreshButton" class="secondary">Обновить</button>
+                    </div>
+                    <p id="collectionsMessage" class="message" role="status" aria-live="polite"></p>
+                    <div id="collections"></div>
+                    <button type="button" class="secondary section-close" data-section-close>Свернуть блок ↑</button>
+                </div>
+            </details>
         </section>
 
         <section class="card">
-            <h2>Сопряжённые устройства</h2>
-            <div id="devices"></div>
+            <details class="section-panel" data-section="devices" open>
+                <summary><h2>Сопряжённые устройства</h2></summary>
+                <div class="section-body">
+                    <div id="devices"></div>
+                    <button type="button" class="secondary section-close" data-section-close>Свернуть блок ↑</button>
+                </div>
+            </details>
         </section>
     </div>
 </main>
 <script src="/app.js"></script>
 <script src="/media.js"></script>
+<script src="/sections.js"></script>
 </body>
 </html>

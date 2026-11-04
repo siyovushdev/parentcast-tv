@@ -45,6 +45,7 @@ internal class ApiController(
         return when {
             request.method == "GET" && request.path == "/" -> staticAsset("web/index.html", "text/html; charset=utf-8")
             request.method == "GET" && request.path == "/app.js" -> staticAsset("web/app.js", "text/javascript; charset=utf-8")
+            request.method == "GET" && request.path == "/sections.js" -> staticAsset("web/sections.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/media.js" -> staticAsset("web/media.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/style.css" -> staticAsset("web/style.css", "text/css; charset=utf-8")
             request.method == "GET" && request.path == "/api/health" -> ApiResponse(200, JSONObject().put("ok", true).put("version", 1).toString())

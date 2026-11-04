@@ -74,3 +74,19 @@ select { padding: 10px; border-radius: 8px; background: #101418; color: #fff; fo
 #localUploadProgress, .import-job progress { width: 100%; }
 .import-job { border-top: 1px solid #33404d; padding: 10px 0; }
 @media(max-width: 600px) { .media-choice { flex-wrap: wrap; } .section-nav a { font-size: .85rem; } }
+
+/* Native details preserve form values, queue editor drafts and ongoing transfers. */
+.section-panel > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 0; list-style: none; scroll-margin-top: 100px; }
+.section-panel > summary::-webkit-details-marker { display: none; }
+.section-panel > summary h2 { margin: 0; }
+.section-panel > summary::after { content: "Развернуть ▾"; flex-shrink: 0; color: #b7cff4; font-size: .85rem; }
+.section-panel[open] > summary::after { content: "Свернуть ▴"; }
+.section-panel > summary:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 6px; border-radius: 4px; }
+.section-body { padding-top: 8px; }
+.section-close { margin-top: 16px; }
+.section-tools button { min-height: 38px; font-size: .9rem; }
+@media(max-width: 600px) {
+    .section-panel > summary { flex-wrap: wrap; gap: 6px; }
+    .section-panel > summary h2 { font-size: 1.05rem; }
+    .section-panel > summary::after { margin-left: auto; }
+}
