@@ -36,7 +36,7 @@ class PlaylistPreviewManager(
                 ?: throw IllegalStateException("Too many previews")
             records.remove(oldest.preview.id)
         }
-        val preview = PlaylistPreview(UUID.randomUUID().toString(), PreviewState.LOADING)
+        val preview = PlaylistPreview(UUID.randomUUID().toString(), PreviewState.LOADING, playlistKey = playlistId)
         val record = Record(owner, preview, now())
         records[preview.id] = record
         record.job = workerScope.launch {

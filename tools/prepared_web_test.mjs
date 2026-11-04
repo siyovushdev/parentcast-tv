@@ -12,7 +12,7 @@ vm.runInContext(fs.readFileSync('app/src/main/assets/web/app.js','utf8'),ctx);
 vm.runInContext(`state={status:'LOADING',prepared:{enabled:true,paused:true,ready:1,count:2,entries:[
     {index:1,title:'<img src=x onerror=alert(1)>',status:'READY',bytes:1048576},
     {index:2,videoId:'video000002',status:'ERROR',bytes:0,error:'YOUTUBE_AUTH_REQUIRED'}]}};renderPrepared()`,ctx);
-assert(elements.get('preparedSummary').textContent.includes('Готово 1 из 2'));
+assert(elements.get('preparedSummary').textContent.includes('Готово в текущем плане: 1 из 2'));
 assert(elements.get('preparedSummary').textContent.includes('остановлена'));
 const rows=elements.get('preparedEntries').children;
 assert(rows[0].children[0].textContent.includes('<img src=x onerror=alert(1)>'));

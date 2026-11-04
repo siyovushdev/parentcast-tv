@@ -32,4 +32,5 @@ data class PlaylistPreview(
     val id: String,
     val state: PreviewState,
     val result: PlaylistResult? = null,
+    val playlistKey: String? = null,
 )

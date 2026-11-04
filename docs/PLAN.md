@@ -83,3 +83,11 @@ stacked к Draft PR #11, без Merge. Анонимные VK-видео и ст�
 с opt-in metadata adapter, provider IDs, полная подготовка/локальный просмотр, прежние
 queueVersion/receipt/dedup/подборки/защита API. M4 и privileged не активируются.
 Результаты и ограничения: reports/VK-video-import.md.
+
+## После HOME BETA — плейлисты как программа
+
+Запрос владельца04.11.2026: tasks/Programme-playlists.md, codex/programme-playlists отe316bb4
+(PR #13), без Merge. Fixed playlist groups в существующей atomic queuev3, shared IDs,
+сохранённые названия, scoped playback с STOP в конце, подготовка группы и порядки списков/
+видео. Старые очередиv1/v2 читаются без удаления, старые источники не выдумываются.
+Приёмка: reports/Programme-playlists.md. Один модуль, прежние Media3/yt-dlp/PIN/API.

@@ -42,7 +42,8 @@ class PlaylistApiTest {
         assertEquals(0,JSONObject(repeated.body).getJSONObject("addition").getInt("added"))
         assertEquals(2,JSONObject(repeated.body).getJSONObject("addition").getInt("skipped"))
         assertEquals(listOf("video000001","video000002"),f.videoIds())
-        assertEquals(1L,f.coordinator.currentSnapshot().queueState.version)
+        assertEquals(2L,f.coordinator.currentSnapshot().queueState.version)
+        assertEquals(2,f.coordinator.currentSnapshot().queueState.groups.size)
         assertEquals(0,f.playerCalls)
         f.close()
     }
@@ -225,6 +226,19 @@ class PlaylistApiTest {
         assertEquals(400, fixture.post(token, "/api/playlists/preview", JSONObject().put("url", "http://127.0.0.1/private")).code)
         assertTrue(fixture.videoIds().isEmpty())
         fixture.close()
+    }
+
+    @Test fun playlistIdentityAndNamesSurviveRestartAndAllDuplicateImport() = runTest {
+        val f=Fixture(this);val token=f.pair();val id=f.preview(token);runCurrent()
+        val first=f.apply(token,id,listOf(2,1));assertEquals(200,first.code)
+        val state=f.coordinator.currentSnapshot().queueState
+        assertEquals("Тест",state.groups.single().name);assertEquals(listOf("Видео 1","Видео 2"),state.items.map {it.title})
+        val repeated=f.apply(token,id,listOf(1,2),version=1);assertEquals(200,repeated.code)
+        assertEquals(1L,f.coordinator.currentSnapshot().queueState.version);assertEquals(1,f.coordinator.currentSnapshot().queueState.groups.size)
+        assertEquals(0,JSONObject(repeated.body).getJSONObject("addition").getInt("added"))
+        f.close();val restored=Fixture(this,f.directory)
+        assertEquals(state.groups,restored.coordinator.currentSnapshot().queueState.groups)
+        assertEquals(state.items,restored.coordinator.currentSnapshot().queueState.items);restored.close()
     }
 
     private inner class Fixture(scope: TestScope, val directory: File = temporaryFolder.newFolder()) {

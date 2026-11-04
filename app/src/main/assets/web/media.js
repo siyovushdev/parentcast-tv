@@ -146,9 +146,13 @@ async function importUsbSelected() {
     } catch(error) { byId("usbMessage").textContent=apiErrorText(error); }
 }
 
-function startQueueOrder() {
+function startQueueOrder(groupId) {
     if(!state)return;
-    queueOrder={version:state.queueVersion,currentIndex:state.currentIndex,items:state.items.map(e=>({...e})),ids:state.items.slice(state.currentIndex+1).map(e=>e.queueItemId),renderKey:null};
+    const group=typeof groupId === "string" ? (state.groups || []).find(g=>g.id === groupId) : null;
+    if(group) {
+        const items=group.videoIds.map(id=>state.items.find(e=>e.videoId === id)).filter(Boolean);
+        queueOrder={groupId:group.id,groupName:group.name,version:state.queueVersion,currentIndex:-1,items,ids:items.map(e=>e.queueItemId),currentItemId:state.items[state.currentIndex]?.queueItemId,renderKey:null};
+    } else queueOrder={version:state.queueVersion,currentIndex:state.currentIndex,items:state.items.map(e=>({...e})),ids:state.items.slice(state.currentIndex+1).map(e=>e.queueItemId),renderKey:null};
     byId("queueOrderTools").hidden=false;byId("editQueueOrder").hidden=true;renderQueue();
 }
 function moveDraft(id,position) {
@@ -159,16 +163,16 @@ function moveDraft(id,position) {
 function sortDraft() {
     if(!state||!queueOrder)return;
     const mode=byId("queueSortMode").value;const items=new Map(state.items.map(e=>[e.queueItemId,e]));
-    const ready=new Set((state.prepared?.entries || []).filter(e=>e.status==="READY").map(e=>e.videoId));
+    const ready=new Set([...(state.prepared?.files || []).map(e=>e.videoId),...(state.prepared?.entries || []).filter(e=>e.status==="READY").map(e=>e.videoId)]);
     const title=id=>items.get(id)?.title || items.get(id)?.videoId || "";
     if(mode==="reverse")queueOrder.ids.reverse();
-    else queueOrder.ids.sort((a,b)=>mode==="ready"?Number(Boolean(items.get(b)?.local)||ready.has(items.get(b)?.videoId))-Number(Boolean(items.get(a)?.local)||ready.has(items.get(a)?.videoId)):title(a).localeCompare(title(b),"ru",{numeric:true})*(mode==="title-desc"?-1:1));
+    else queueOrder.ids.sort((a,b)=>mode==="ready"?Number(items.get(b)?.ready===true || (items.get(b)?.ready===undefined && Boolean(items.get(b)?.local)) || ready.has(items.get(b)?.videoId))-Number(items.get(a)?.ready===true || (items.get(a)?.ready===undefined && Boolean(items.get(a)?.local)) || ready.has(items.get(a)?.videoId)):title(a).localeCompare(title(b),"ru",{numeric:true})*(mode==="title-desc"?-1:1));
     renderQueue();
 }
 function renderQueueEditor() {
     if(!queueOrder || !state)return false;
     const stale=queueOrder.version!==state.queueVersion;
-    byId("queueOrderMessage").textContent=stale?"Программа изменилась. Отмените редактирование и проверьте новый список.":"Изменения ещё не сохранены.";
+    byId("queueOrderMessage").textContent=(queueOrder.groupId?`Плейлист «${queueOrder.groupName}». `:"")+(stale?"Программа изменилась. Отмените редактирование и проверьте новый список.":"Изменения ещё не сохранены.");
     byId("queueOrderApply").disabled=stale||busyActions.has("reorder");
     const key=JSON.stringify([queueOrder.ids,stale]);
     if(queueOrder.renderKey===key)return true;
@@ -179,7 +183,7 @@ function renderQueueEditor() {
     order.forEach((id,index)=> {
         const item=map.get(id);if(!item)return;
         const row=document.createElement("div");row.className="queue-item";
-        const title=document.createElement("div");title.textContent=`${index+1}. ${item.title||item.videoId}${index===queueOrder.currentIndex?" — текущий":""}`;row.append(title);
+        const title=document.createElement("div");title.textContent=`${index+1}. ${item.title||item.videoId}${(queueOrder.groupId ? id===queueOrder.currentItemId : index===queueOrder.currentIndex)?" — текущий":""}`;row.append(title);
         const pendingIndex=queueOrder.ids.indexOf(id);
         if(pendingIndex>=0) {
             row.draggable=!stale;row.dataset.orderId=id;
@@ -196,12 +200,15 @@ async function applyQueueOrder() {
     if(!queueOrder || !state || queueOrder.version!==state.queueVersion)return;
     await withBusy("reorder",async()=> {
         try {
-            await perform("reorder-"+commandKey(),"/api/queue/reorder",{queueItemIds:queueOrder.ids.slice(),queueVersion:queueOrder.version,idempotencyKey:commandKey()});
+            const payload={queueVersion:queueOrder.version,idempotencyKey:commandKey()};
+            if(queueOrder.groupId) {payload.groupId=queueOrder.groupId;payload.videoIds=queueOrder.ids.map(id=>queueOrder.items.find(e=>e.queueItemId===id).videoId);}
+            else payload.queueItemIds=queueOrder.ids.slice();
+            await perform("reorder-"+commandKey(),queueOrder.groupId?"/api/queue/group-order":"/api/queue/reorder",payload);
             cancelQueueOrder();byId("queueOrderMessage").textContent="Новый порядок сохранён. Воспроизведение не изменилось.";
         } catch(error) { byId("queueOrderMessage").textContent=apiErrorText(error); }
     });
 }
-function cancelQueueOrder() { queueOrder=null;byId("queueOrderTools").hidden=true;byId("editQueueOrder").hidden=false;renderQueue(); }
+function cancelQueueOrder() { queueOrder=null;if(typeof programmeViewKey!=="undefined")programmeViewKey=null;byId("queueOrderTools").hidden=true;byId("editQueueOrder").hidden=false;renderQueue(); }
 
 byId("localRefreshButton").addEventListener("click",()=>run(refreshLocalMedia));
 byId("uploadLocalButton").addEventListener("click",()=>run(uploadLocalFiles));

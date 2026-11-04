@@ -8,11 +8,15 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal class PreparedApi(private val library: PreparedLibrary, private val coordinator: PlaybackCoordinator, private val dispatcher: CallDispatcher) {
+    fun readiness(id: String): String = library.snapshot().let { s -> if(id in s.deleting) "DELETING" else s.entries[id]?.status?.name ?: "WAITING" }
+    fun canPlay(id: String): Boolean = readiness(id) == "READY" ||
+        (!library.snapshot().enabled && !id.startsWith("local_") && !dev.siyovush.parentcast.tv.media.OnlineMediaIds.isVk(id))
     fun state(): JSONObject {
         val s = library.snapshot(); val entries = JSONArray()
+        val titles=dispatcher.call { coordinator.currentSnapshot().queueState.items.associate { it.videoId to it.title } }
         s.plan.forEachIndexed { index, id ->
             val e = s.entries[id] ?: PreparedEntry(id)
-            entries.put(JSONObject().put("index", index + 1).put("videoId", id).put("title", e.title).put("status", if (id in s.deleting) "DELETING" else e.status.name)
+            entries.put(JSONObject().put("index", index + 1).put("videoId", id).put("title", e.title.ifBlank { titles[id].orEmpty() }).put("status", if (id in s.deleting) "DELETING" else e.status.name)
                 .put("bytes", e.bytes).put("totalBytes", e.total.takeIf { e.totalKnown || e.status == PreparationStatus.READY } ?: JSONObject.NULL)
                 .put("percent", if (id in s.deleting) JSONObject.NULL else preparationPercent(e) ?: JSONObject.NULL).put("phase", e.phase)
                 .put("error", e.error).put("attempts", e.attempts).put("retryAtMs", e.retryAtMs))
@@ -25,7 +29,7 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
         val storage = library.storageStats()
         return JSONObject().put("files", files).put("clearing", s.deleting.isNotEmpty()).put("operationError", s.operationError).put("usedBytes", storage.first).put("freeBytes", storage.second)
             .put("additionalBytes", minOf((library.limit - storage.first).coerceAtLeast(0), (storage.second - FREE_RESERVE).coerceAtLeast(0)))
-            .put("enabled", s.enabled).put("paused", s.paused).put("storageError", s.storageError)
+            .put("targetGroupId",s.targetGroupId ?: JSONObject.NULL).put("enabled", s.enabled).put("paused", s.paused).put("storageError", s.storageError)
             .put("ready", s.plan.count { s.entries[it]?.status == PreparationStatus.READY && it !in s.deleting }).put("count", s.plan.size)
             .put("limitBytes", library.limit).put("reserveBytes", FREE_RESERVE).put("entries", entries)
     }
@@ -38,7 +42,9 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
         if (action in setOf("ENABLE", "DELETE", "DELETE_ALL") && json.optLong("queueVersion", -1) != snapshot.queueState.version) {
             return 409 to "{\"error\":\"QUEUE_VERSION_CONFLICT\"}"
         }
-        val ids = snapshot.queueState.let { it.items.drop(it.currentIndex.coerceAtLeast(0)).filterNot { item -> item.local }.map { item -> item.videoId } }
+        val groupId = json.optString("groupId").takeIf { it.isNotBlank() }
+        val group = groupId?.let { id -> snapshot.queueState.groups.find { it.id == id } ?: return 400 to "{\"error\":\"BAD_REQUEST\"}" }
+        val ids = group?.videoIds ?: snapshot.queueState.remainingItems().filterNot { it.local }.map { it.videoId }
         return try {
             if (action in setOf("DELETE", "DELETE_ALL")) {
                 val result = dispatcher.call {
@@ -57,7 +63,7 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
             }
             runBlocking(Dispatchers.IO) {
                 when (action) {
-                    "ENABLE" -> library.configure(true, ids)
+                    "ENABLE" -> library.configure(true, ids, groupId)
                     "DISABLE" -> library.configure(false, ids)
                     "PAUSE" -> library.pause()
                     "RETRY" -> library.retry()
@@ -68,7 +74,7 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
                 }
             }
             dispatcher.call { val q = coordinator.currentSnapshot().queueState
-                library.schedule(q.items.drop(q.currentIndex.coerceAtLeast(0)).filterNot { it.local }.map { it.videoId }) }
+                library.syncQueue(q) }
             (if (action in setOf("DELETE", "DELETE_ALL", "RETRY_DELETE")) 202 else 200) to state().toString()
         } catch (error: Exception) {
             (if (error.message == "BUSY") 409 else 503) to "{\"error\":\"PREPARATION_BUSY_OR_STORAGE_ERROR\"}"

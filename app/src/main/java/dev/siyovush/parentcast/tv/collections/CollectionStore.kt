@@ -16,6 +16,7 @@ data class SavedCollection(
     val videoIds: List<String>,
     val createdAtMs: Long,
     val creationFingerprint: String? = null,
+    val titles: Map<String,String> = emptyMap(),
 ) {
     init {
         require(Regex("[A-Za-z0-9_-]{1,100}").matches(id)) { "Invalid collection ID" }
@@ -24,6 +25,7 @@ data class SavedCollection(
         }
         require(videoIds.size in 1..500) { "A collection must contain 1..500 videos" }
         require(videoIds.all(dev.siyovush.parentcast.tv.media.OnlineMediaIds::isOnline)) { "Invalid video ID" }
+        require(titles.keys.all { it in videoIds } && titles.values.all { it == dev.siyovush.parentcast.tv.queue.cleanVideoTitle(it) })
         require(createdAtMs >= 0) { "Invalid creation time" }
         require(creationFingerprint == null || Regex("[0-9a-f]{64}").matches(creationFingerprint)) {
             "Invalid creation fingerprint"
@@ -51,7 +53,7 @@ class AtomicCollectionStore(private val file: File) : CollectionStore {
     @Synchronized
     override fun save(collection: SavedCollection) {
         // Copy before validation/use; later caller mutations cannot change the saved selection.
-        val snapshot = collection.copy(videoIds = collection.videoIds.toList())
+        val snapshot = collection.copy(videoIds = collection.videoIds.toList(), titles = collection.titles.toMap())
         val current = readCollections()
         val existingIndex = current.indexOfFirst { it.id == snapshot.id }
         val updated = current.toMutableList().apply {
@@ -91,6 +93,7 @@ class AtomicCollectionStore(private val file: File) : CollectionStore {
                     name = record.get("name") as String,
                     videoIds = List(ids.length()) { ids.get(it) as String },
                     createdAtMs = record.getLong("createdAtMs"),
+                    titles = record.optJSONObject("titles")?.let { t -> t.keys().asSequence().associateWith { t.getString(it) } }.orEmpty(),
                     creationFingerprint = if (record.has("creationFingerprint") && !record.isNull("creationFingerprint")) {
                         record.get("creationFingerprint") as String
                     } else null,
@@ -111,7 +114,7 @@ class AtomicCollectionStore(private val file: File) : CollectionStore {
                 JSONObject()
                     .put("id", collection.id)
                     .put("name", collection.name)
-                    .put("videoIds", JSONArray(collection.videoIds))
+                    .put("videoIds", JSONArray(collection.videoIds)).put("titles",JSONObject(collection.titles))
                     .put("createdAtMs", collection.createdAtMs)
                     .put("creationFingerprint", collection.creationFingerprint ?: JSONObject.NULL),
             )

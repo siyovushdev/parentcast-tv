@@ -1,5 +1,7 @@
 package dev.siyovush.parentcast.tv.playback
 
+import dev.siyovush.parentcast.tv.queue.QueueGroup
+import dev.siyovush.parentcast.tv.queue.cleanVideoTitle
 import dev.siyovush.parentcast.tv.queue.BatchAddResult
 import dev.siyovush.parentcast.tv.queue.BatchReceipt
 import dev.siyovush.parentcast.tv.queue.PlaybackIntent
@@ -110,12 +112,14 @@ class PlaybackCoordinator(
     fun additionSummary(commandKey: String): QueueAddition? = state.batchReceipts.find { it.key == commandKey }?.addition
 
     /** One queue transaction; no player calls and no change of playback intent. */
-    fun addBatch(videoIds: List<String>, expectedVersion: Long, commandKey: String, requestFingerprint: String? = null, local: Boolean = false): BatchAddResult {
+    fun addBatch(videoIds: List<String>, expectedVersion: Long, commandKey: String, requestFingerprint: String? = null, local: Boolean = false, group: QueueGroup? = null, titles: Map<String,String> = emptyMap()): BatchAddResult {
         require(videoIds.size in 1..500 && videoIds.all { if(local) Regex("local_[0-9a-f]{32}").matches(it) else dev.siyovush.parentcast.tv.media.OnlineMediaIds.isOnline(it) })
+        require(group == null || group.videoIds == videoIds.distinct())
+        require(titles.keys.all { it in videoIds } && titles.values.all { it == cleanVideoTitle(it) })
         require(commandKey.length in 8..300)
         if (closed) return BatchAddResult.STORAGE_ERROR
         val fingerprint = requestFingerprint ?: java.security.MessageDigest.getInstance("SHA-256")
-            .digest((expectedVersion.toString() + "|" + videoIds.joinToString(",") + if (local) "|local" else "").toByteArray())
+            .digest((expectedVersion.toString() + "|" + videoIds.joinToString(",") + (if (local) "|local" else "") + "|" + group.toString() + "|" + titles.toSortedMap().toString()).toByteArray())
             .joinToString("") { "%02x".format(it) }
         val now = System.currentTimeMillis()
         val receipts = state.batchReceipts.filter { now - it.createdAtMs <= 86_400_000L }
@@ -125,12 +129,17 @@ class PlaybackCoordinator(
         if (state.version != expectedVersion) return BatchAddResult.CONFLICT
         if (receipts.size >= 1000) return BatchAddResult.RECEIPT_LIMIT
         val seen = state.items.mapTo(mutableSetOf()) { it.videoId }
-        val items = videoIds.filter { seen.add(it) }.map { QueueItem(UUID.randomUUID().toString(), it, local) }
-        val addition = QueueAddition(items.size, videoIds.size - items.size)
+        val items = videoIds.filter { seen.add(it) }.map { QueueItem(UUID.randomUUID().toString(), it, local, titles[it].orEmpty()) }
+        val allItems = (state.items + items).map { item -> titles[item.videoId]?.let { item.copy(title = it) } ?: item }
+        val groups = if (group == null) state.groups else if(state.groups.any { it.id == group.id }) state.groups.map { if(it.id == group.id) group else it } else state.groups + group
+        if (groups.size > 100) return BatchAddResult.RECEIPT_LIMIT
+        val addition = QueueAddition(items.size, videoIds.size - items.size, group?.id)
+        val changed = allItems != state.items || groups != state.groups
         val updated = state.copy(
-            items = state.items + items,
+            items = allItems,
+            groups = groups,
             currentIndex = if (state.items.isEmpty() && items.isNotEmpty()) 0 else state.currentIndex,
-            version = state.version + if (items.isEmpty()) 0 else 1,
+            version = state.version + if (changed) 1 else 0,
             batchReceipts = receipts + BatchReceipt(commandKey, fingerprint, now, addition),
         )
         try {
@@ -267,20 +276,68 @@ class PlaybackCoordinator(
     }
 
     /** Explicit parent selection, without inserting another copy into the programme. */
-    fun selectQueued(id: String, expectedVersion: Long, positionMs: Long, play: Boolean, key: String, fingerprint: String): BatchAddResult {
+    fun selectQueued(id: String, expectedVersion: Long, positionMs: Long, play: Boolean, key: String, fingerprint: String, groupId: String? = null): BatchAddResult {
         if(closed) return BatchAddResult.STORAGE_ERROR
         batchReplay(key,fingerprint)?.let { return it }
         if(state.version!=expectedVersion) return BatchAddResult.CONFLICT
         val index=state.items.indexOfFirst { it.queueItemId==id }
         require(index>=0 && positionMs in 0..604_800_000L)
+        require(groupId == null || state.groups.any { it.id == groupId && state.items[index].videoId in it.videoIds })
         val now=System.currentTimeMillis();val receipts=state.batchReceipts.filter { now-it.createdAtMs<=86_400_000 }
         if(receipts.size>=1000)return BatchAddResult.RECEIPT_LIMIT
-        val updated=state.copy(currentIndex=index,positionMs=positionMs,intent=if(play)PlaybackIntent.PLAY else PlaybackIntent.STOP,
+        val updated=state.copy(currentIndex=index,activeGroupId=groupId,positionMs=positionMs,intent=if(play)PlaybackIntent.PLAY else PlaybackIntent.STOP,
             finished=false,version=state.version+1,batchReceipts=receipts+BatchReceipt(key,fingerprint,now))
         try {store.write(updated)} catch (_:Exception){return BatchAddResult.STORAGE_ERROR}
         state=updated;invalidateRequest();currentTitle="";diagnostics="";error=null;refreshAttempted=false;status=PlaybackStatus.STOPPED;emit()
         if(play)prepareCurrent()
         return BatchAddResult.APPLIED
+    }
+
+    /** Group ordering is metadata: the playing item, position and generation stay intact. */
+    fun reorderGroups(ids: List<String>, groupId: String?, expectedVersion: Long, key: String, fingerprint: String): BatchAddResult {
+        if (closed) return BatchAddResult.STORAGE_ERROR
+        batchReplay(key, fingerprint)?.let { return it }
+        if (state.version != expectedVersion) return BatchAddResult.CONFLICT
+        require(ids.distinct().size == ids.size)
+        val groups = if (groupId == null) {
+            require(ids.size == state.groups.size && ids.toSet() == state.groups.map { it.id }.toSet())
+            val byId = state.groups.associateBy { it.id }; ids.map { byId.getValue(it) }
+        } else {
+            val group = state.groups.find { it.id == groupId } ?: throw IllegalArgumentException()
+            require(ids.size == group.videoIds.size && ids.toSet() == group.videoIds.toSet())
+            state.groups.map { if (it.id == groupId) it.copy(videoIds = ids) else it }
+        }
+        val now = System.currentTimeMillis(); val receipts = state.batchReceipts.filter { now-it.createdAtMs <= 86_400_000 }
+        if (receipts.size >= 1000) return BatchAddResult.RECEIPT_LIMIT
+        val updated = state.copy(groups = groups, version = state.version + if(groups == state.groups) 0 else 1,
+            batchReceipts = receipts + BatchReceipt(key,fingerprint,now))
+        try { store.write(updated) } catch (_: Exception) { return BatchAddResult.STORAGE_ERROR }
+        state = updated; emit(); return BatchAddResult.APPLIED
+    }
+
+    /** Remove this fixed list; shared videos, downloaded files and saved collections remain. */
+    fun removeGroup(groupId: String, expectedVersion: Long, key: String, fingerprint: String): BatchAddResult {
+        if(closed)return BatchAddResult.STORAGE_ERROR
+        batchReplay(key,fingerprint)?.let { return it }
+        if(state.version!=expectedVersion)return BatchAddResult.CONFLICT
+        val group=state.groups.find { it.id==groupId } ?: throw IllegalArgumentException()
+        val groups=state.groups.filterNot { it.id==groupId }
+        val shared=groups.flatMap { it.videoIds }.toSet()
+        val removed=group.videoIds.toSet()-shared
+        val items=state.items.filterNot { it.videoId in removed }
+        val current=state.currentItem
+        val currentRemains=items.any { it.queueItemId==current?.queueItemId }
+        val stop=state.activeGroupId==groupId || !currentRemains
+        val index=if(items.isEmpty()) -1 else if(currentRemains) items.indexOfFirst { it.queueItemId==current?.queueItemId } else state.currentIndex.coerceAtMost(items.lastIndex)
+        val now=System.currentTimeMillis();val receipts=state.batchReceipts.filter {now-it.createdAtMs<=86_400_000}
+        if(receipts.size>=1000)return BatchAddResult.RECEIPT_LIMIT
+        val updated=state.copy(items=items,groups=groups,currentIndex=index,activeGroupId=if(stop)null else state.activeGroupId,
+            positionMs=if(currentRemains)state.positionMs else 0,intent=if(stop)PlaybackIntent.STOP else state.intent,
+            finished=if(items.isEmpty() || stop)false else state.finished,version=state.version+1,batchReceipts=receipts+BatchReceipt(key,fingerprint,now))
+        try {store.write(updated)} catch (_:Exception){return BatchAddResult.STORAGE_ERROR}
+        state=updated
+        if(stop){invalidateRequest();currentTitle="";diagnostics="";error=null;status=PlaybackStatus.STOPPED}
+        emit();return BatchAddResult.APPLIED
     }
 
     /** Reorder only the pending suffix; receipt and queue commit share the same atomic file. */
