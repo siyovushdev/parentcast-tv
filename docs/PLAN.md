@@ -68,3 +68,10 @@ M0–M3 объединены в main по отдельному разрешен�
 браузера/SAF USB, явное local-источник очереди и атомарный редактор порядка. Один Android-модуль,
 общий media-бюджет, прежняя PIN/API защита; без Merge/M4/privileged/системных изменений.
 Аппаратная приёмка требует безопасного обновления между текущими загрузками и физической USB.
+
+## После HOME BETA — защита очереди от дублей
+
+Запрос владельца04.11.2026: tasks/Queue-deduplication.md, ветка codex/queue-deduplication
+от5ba1a51. Единая фильтрация videoId, atomic receipt/added+skipped/no-op version, busy/queued UI.
+Обычный v8 update без очистки и H728 API PASS;230 JVM tests/lint/JS PASS. Отдельный Draft PR
+к PR #10, без Merge. Chrome UI NOT_RUN из-за инструмента; reports/Queue-deduplication.md.

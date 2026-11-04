@@ -41,7 +41,7 @@ internal class PlaylistApi(
     fun mutate(path: String, owner: String, json: JSONObject, commandKey: String, fingerprint: String): ApiResponse = safely {
         // Receipt is committed with the queue, so retries work even after preview expiry/process death.
         if (path.endsWith("/apply")) {
-            dispatcher.call { coordinator.batchReplay(commandKey, fingerprint) }?.let { return@safely batchResponse(it) }
+            dispatcher.call { coordinator.batchReplay(commandKey, fingerprint) }?.let { return@safely batchResponse(it, commandKey) }
         }
         when (path) {
             "/api/playlists/preview" -> {
@@ -104,16 +104,11 @@ internal class PlaylistApi(
         val version = json.get("queueVersion")
         require(version is Int || version is Long)
         require((version as Number).toLong() >= 0)
-        return batchResponse(dispatcher.call { coordinator.addBatch(ids, version.toLong(), commandKey, fingerprint) })
+        return batchResponse(dispatcher.call { coordinator.addBatch(ids, version.toLong(), commandKey, fingerprint) }, commandKey)
     }
 
-    private fun batchResponse(result: BatchAddResult): ApiResponse = when (result) {
-        BatchAddResult.APPLIED, BatchAddResult.REPLAY -> ApiResponse(200, stateBody())
-        BatchAddResult.CONFLICT -> failure(409, "QUEUE_VERSION_CONFLICT")
-        BatchAddResult.KEY_REUSED -> failure(409, "IDEMPOTENCY_KEY_REUSED")
-        BatchAddResult.RECEIPT_LIMIT -> failure(429, "COMMAND_STORAGE_LIMIT")
-        BatchAddResult.STORAGE_ERROR -> failure(503, "QUEUE_STORAGE_ERROR")
-    }
+    private fun batchResponse(result: BatchAddResult, key: String): ApiResponse =
+        queueAdditionResponse(result, dispatcher.call { coordinator.additionSummary(key) }, stateBody())
 
     private fun previewJson(preview: PlaylistPreview): JSONObject {
         val result = preview.result

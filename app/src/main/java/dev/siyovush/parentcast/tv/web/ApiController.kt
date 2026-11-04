@@ -96,7 +96,7 @@ internal class ApiController(
         if (!security.isStateChangeAllowed(request.headers)) return ApiResponse(403, error("FORBIDDEN"))
         return when (request.path) {
             "/api/prepared" -> mutation(request, device) { json -> prepared?.mutate(json) ?: (404 to error("NOT_FOUND")) }
-            "/api/queue/add" -> mutation(request, device) { json -> add(json) }
+            "/api/queue/add" -> mutation(request, device) { json -> add(json, commandStorageKey(request, device, json), requestFingerprint(json)) }
             "/api/queue/play-now" -> mutation(request, device) { json -> playNow(json) }
             "/api/playback" -> mutation(request, device) { json -> playback(json) }
             "/api/queue/delete" -> mutation(request, device) { json -> deletePending(json) }
@@ -160,9 +160,10 @@ internal class ApiController(
         val key = json.optString("idempotencyKey")
         if (key.length < 8 || key.length > 100) return ApiResponse(400, error("BAD_REQUEST"))
         val storageKey = commandStorageKey(request, device, json)
-        val fingerprint = if (playlists?.handles(request.path) == true || localMedia?.handles(request.path)==true || request.path in setOf("/api/prepared", "/api/queue/clear-all", "/api/queue/reorder", "/api/queue/select")) requestFingerprint(json) else null
+        val fingerprint = if (playlists?.handles(request.path) == true || localMedia?.handles(request.path)==true || request.path in setOf("/api/queue/add", "/api/prepared", "/api/queue/clear-all", "/api/queue/reorder", "/api/queue/select")) requestFingerprint(json) else null
         idempotencyStore.get(storageKey)?.let {
-            if (fingerprint != null && it.requestFingerprint != fingerprint) return ApiResponse(409, error("IDEMPOTENCY_KEY_REUSED"))
+            val legacyAdd = request.path == "/api/queue/add" && it.requestFingerprint == null
+            if (fingerprint != null && !legacyAdd && it.requestFingerprint != fingerprint) return ApiResponse(409, error("IDEMPOTENCY_KEY_REUSED"))
             return ApiResponse(it.code, it.body)
         }
         val result = action(json)
@@ -180,7 +181,7 @@ internal class ApiController(
     private fun commandStorageKey(request: ApiRequest, device: DeviceRecord, json: JSONObject): String =
         "${device.deviceId}|${request.path}|${json.optString("idempotencyKey")}"
 
-    private fun add(json: JSONObject): Pair<Int, String> {
+    private fun add(json: JSONObject, key: String, fingerprint: String): Pair<Int, String> {
         val links = json.optJSONArray("links") ?: return badRequest()
         if (links.length() == 0 || links.length() > 20) return badRequest()
         val videoIds = try {
@@ -188,8 +189,15 @@ internal class ApiController(
         } catch (error: Exception) {
             return badRequest()
         }
-        dispatcher.call { videoIds.forEach(coordinator::add) }
-        return 200 to stateBody()
+        if (json.has("queueVersion")) {
+            val version = json.get("queueVersion")
+            if ((version !is Int && version !is Long) || (version as Number).toLong() < 0) return badRequest()
+        }
+        val (result, addition) = dispatcher.call {
+            val version = json.optLong("queueVersion", coordinator.currentSnapshot().queueState.version)
+            coordinator.addBatch(videoIds, version, key, fingerprint) to coordinator.additionSummary(key)
+        }
+        return queueAdditionResponse(result, addition, stateBody()).let { it.code to it.body }
     }
 
     private fun playNow(json: JSONObject): Pair<Int, String> {

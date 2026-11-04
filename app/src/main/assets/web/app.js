@@ -353,17 +353,24 @@ function hasPending(path, field, value) {
 }
 
 async function addLinks() {
-    const links = byId("links").value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
-    if (!links.length) return;
-    await perform(`add-${commandKey()}`, "/api/queue/add", {links, idempotencyKey: commandKey()});
-    byId("links").value = "";
+    if (!state) return;
+    return withBusy("links-add", async () => {
+        const input = byId("links").value;
+        const links = input.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+        if (!links.length) return;
+        await perform(`add-${commandKey()}`, "/api/queue/add", {links, queueVersion: state.queueVersion, idempotencyKey: commandKey()});
+        if (byId("links").value === input) byId("links").value = "";
+    });
 }
 
 async function playNow() {
-    const videoId = byId("playNowLink").value.trim();
-    if (!videoId) return;
-    await perform(`play-now-${commandKey()}`, "/api/queue/play-now", {videoId, idempotencyKey: commandKey()});
-    byId("playNowLink").value = "";
+    return withBusy("play-now", async () => {
+        const input = byId("playNowLink").value;
+        const videoId = input.trim();
+        if (!videoId) return;
+        await perform(`play-now-${commandKey()}`, "/api/queue/play-now", {videoId, idempotencyKey: commandKey()});
+        if (byId("playNowLink").value === input) byId("playNowLink").value = "";
+    });
 }
 
 async function playback(action) {
@@ -455,8 +462,17 @@ function previewCanApply() {
     return preview && ["COMPLETE", "PARTIAL"].includes(preview.status);
 }
 
+function queueAdditionMessage(result) {
+    const addition = result && result.addition;
+    if (!addition) return "Команда добавления обработана. Воспроизведение не запущено.";
+    if (addition.added === 0) return "Все выбранные ролики уже есть в очереди. Повторы не добавлены.";
+    return `Добавлено новых: ${addition.added}. Пропущено повторов: ${addition.skipped}. Воспроизведение не запущено.`;
+}
+
 function commandCompleted(path, payload, result) {
-    if (path === "/api/playlists/preview") {
+    if (path === "/api/queue/add") {
+        byId("commandMessage").textContent = queueAdditionMessage(result);
+    } else if (path === "/api/playlists/preview") {
         clearPreview();
         preview = {previewId: result.previewId, status: "LOADING", entries: []};
         byId("playlistMessage").textContent = "Получение списка на приставке… Управление плеером доступно.";
@@ -468,7 +484,7 @@ function commandCompleted(path, payload, result) {
             byId("playlistMessage").textContent = "Предпросмотр отменён. Очередь не изменена.";
         }
     } else if (path === "/api/playlists/apply") {
-        byId("playlistMessage").textContent = `Добавлены выбранные элементы: ${payload.indices.length}. Воспроизведение не запускается этой командой.`;
+        byId("playlistMessage").textContent = queueAdditionMessage(result);
     } else if (path === "/api/collections/save") {
         byId("collectionsMessage").textContent = "Подборка сохранена на приставке как фиксированный список.";
         run(refreshCollections);
@@ -476,7 +492,7 @@ function commandCompleted(path, payload, result) {
         byId("collectionsMessage").textContent = "Подборка удалена. Текущая очередь не изменена.";
         run(refreshCollections);
     } else if (path === "/api/collections/apply") {
-        byId("collectionsMessage").textContent = "Фиксированный список добавлен в очередь. Воспроизведение не запускается этой командой.";
+        byId("collectionsMessage").textContent = queueAdditionMessage(result);
     }
 }
 
@@ -577,15 +593,24 @@ function renderPreview() {
 
 function updateSelectionControls() {
     const selected = selectedIndices.size;
-    byId("playlistSelectedCount").textContent = `Выбрано: ${selected}`;
+    const queued = new Set((state && state.items || []).map(item => item.videoId));
+    const newIds = new Set((preview && preview.entries || []).filter(entry => selectedIndices.has(entry.index) && entry.selectable && !queued.has(entry.videoId)).map(entry => entry.videoId));
+    byId("playlistSelectedCount").textContent = `Выбрано: ${selected}; новых: ${newIds.size}. Ролики из очереди повторно не добавляются.`;
+    byId("playlistApplyButton").textContent = selected && !newIds.size ? "Уже в очереди" : "Добавить выбранные";
     const previewId = preview ? preview.previewId : "";
-    byId("playlistApplyButton").disabled = !previewCanApply() || !selected || busyActions.has("apply") || !state || hasPending("/api/playlists/apply", "previewId", previewId);
+    byId("playlistApplyButton").disabled = !previewCanApply() || !selected || !newIds.size || busyActions.has("apply") || !state || hasPending("/api/playlists/apply", "previewId", previewId);
     byId("collectionSaveButton").disabled = !previewCanApply() || !selected || busyActions.has("save") || !byId("collectionName").value.trim() || hasPending("/api/collections/save", "previewId", previewId);
     byId("playlistPreviewButton").disabled = previewRequesting || busyActions.has("cancel") || Object.values(pendingCommands).some(command => command.path === "/api/playlists/preview");
     byId("playlistCancelButton").disabled = busyActions.has("cancel") || hasPending("/api/playlists/cancel", "previewId", previewId);
+    byId("addButton").disabled = !state || busyActions.has("links-add") || Object.values(pendingCommands).some(command => command.path === "/api/queue/add");
+    byId("playNowButton").disabled = busyActions.has("play-now") || Object.values(pendingCommands).some(command => command.path === "/api/queue/play-now");
+    if (typeof updateLocalAddControl === "function") updateLocalAddControl();
     document.querySelectorAll("button[data-collection-action]").forEach(button => {
         const id = button.dataset.collectionId;
-        button.disabled = busyActions.has(`collection-${id}`) || hasPending(`/api/collections/${button.dataset.collectionAction}`, "collectionId", id);
+        const collection = collections.find(item => item.id === id);
+        const alreadyQueued = button.dataset.collectionAction === "apply" && collection && collection.videoIds.every(videoId => queued.has(videoId));
+        if (button.dataset.collectionAction === "apply") button.textContent = alreadyQueued ? "Подборка уже в очереди" : "Добавить подборку в очередь";
+        button.disabled = Boolean(alreadyQueued) || busyActions.has(`collection-${id}`) || hasPending(`/api/collections/${button.dataset.collectionAction}`, "collectionId", id);
     });
 }
 

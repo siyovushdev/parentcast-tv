@@ -19,6 +19,9 @@ const stored = new Map();
 const requests = [];
 let loseApplyResponse = false;
 let nextFailure = null;
+let heldPath = null;
+let releaseHeld = null;
+let additionResult = null;
 const playerState = {queueVersion: 7, items: [], currentIndex: -1, positionMs: 0, intent: "STOP", status: "STOPPED", updatedAtMs: 0};
 const context = vm.createContext({
     document: {
@@ -41,6 +44,10 @@ const context = vm.createContext({
         assert.equal(header, expectedClient, `Frontend protocol header incompatible with RequestSecurity for ${path}`);
         const body = options.body === undefined ? undefined : JSON.parse(options.body);
         requests.push({path, method: options.method, body});
+        if (heldPath === path && options.method === "POST") {
+            heldPath = null;
+            await new Promise(resolve => { releaseHeld = resolve; });
+        }
         if (nextFailure && nextFailure.path === path) {
             const failure = nextFailure;
             nextFailure = null;
@@ -50,7 +57,7 @@ const context = vm.createContext({
             loseApplyResponse = false;
             throw new Error("Synthetic lost response");
         }
-        const result = path === "/api/state" ? playerState : {ok: true};
+        const result = path === "/api/state" ? playerState : additionResult || {ok: true};
         return {ok: true, status: 200, text: async () => JSON.stringify(result)};
     },
 });
@@ -125,3 +132,30 @@ await assert.rejects(vm.runInContext("collectionAction('apply', 'fixture')", con
 assert(elements.get("collectionsMessage").textContent.includes("Ключ команды уже использован"));
 assert(!elements.get("collectionsMessage").textContent.includes("Очередь изменилась"));
 console.log("PASS: frontend protocol and routes; JSON; original retry/queueVersion; accurate 409/429 messages (synthetic, no network)");
+
+// Duplicate clicks are blocked immediately, and a successful request reports server counts.
+vm.runInContext("preview={previewId:'dedup',status:'COMPLETE',entries:[{index:1,videoId:'video000001',selectable:true}]}; selectedIndices=new Set([1]); state.items=[]", context);
+heldPath = "/api/playlists/apply";
+additionResult = {addition:{added:1,skipped:0}};
+let start = requests.filter(r => r.path === heldPath).length;
+const applying = vm.runInContext("applyPreview()", context);
+const duplicateClick = vm.runInContext("applyPreview()", context);
+assert.equal(elements.get("playlistApplyButton").disabled, true);
+assert.equal(requests.filter(r=>r.path==="/api/playlists/apply").length, start+1);
+releaseHeld(); await Promise.all([applying,duplicateClick]);
+assert(elements.get("playlistMessage").textContent.includes("Добавлено новых: 1"));
+vm.runInContext("state.items=[{videoId:'video000001'}]; updateSelectionControls()", context);
+assert.equal(elements.get("playlistApplyButton").disabled, true);
+assert.equal(elements.get("playlistApplyButton").textContent,"Уже в очереди");
+assert.equal(vm.runInContext("queueAdditionMessage({addition:{added:0,skipped:38}})",context),"Все выбранные ролики уже есть в очереди. Повторы не добавлены.");
+heldPath = "/api/queue/add";
+additionResult = {addition:{added:0,skipped:1}};
+vm.runInContext("byId('links').value='https://youtu.be/video000001'",context);
+start = requests.filter(r=>r.path===heldPath).length;
+const adding = vm.runInContext("addLinks()",context);
+const addingAgain = vm.runInContext("addLinks()",context);
+assert.equal(elements.get("addButton").disabled,true);
+assert.equal(requests.filter(r=>r.path==="/api/queue/add").length,start+1);
+releaseHeld(); await Promise.all([adding,addingAgain]);
+assert(elements.get("commandMessage").textContent.includes("уже есть в очереди"));
+console.log("PASS: repeated playlist/link clicks, busy controls, queued selection and accurate added/skipped messages (synthetic)");

@@ -2,6 +2,7 @@ package dev.siyovush.parentcast.tv.local
 
 import dev.siyovush.parentcast.tv.prepared.*
 import dev.siyovush.parentcast.tv.playback.PlaybackCoordinator
+import dev.siyovush.parentcast.tv.web.additionJson
 import dev.siyovush.parentcast.tv.queue.BatchAddResult
 import dev.siyovush.parentcast.tv.web.*
 import kotlinx.coroutines.*
@@ -91,7 +92,8 @@ internal class LocalVideoApi(
                 require(ids.all { it in available }) { "LOCAL_FILE_NOT_FOUND" }
                 val result=dispatcher.call { coordinator.addBatch(ids,j.optLong("queueVersion",-1),key,fingerprint,local=true) }
                 when(result) {
-                    BatchAddResult.APPLIED,BatchAddResult.REPLAY -> 200 to "{\"added\":true}"
+                    BatchAddResult.APPLIED,BatchAddResult.REPLAY -> 200 to JSONObject().put("added",true)
+                        .put("addition",additionJson(dispatcher.call { coordinator.additionSummary(key) })).toString()
                     BatchAddResult.CONFLICT -> 409 to "{\"error\":\"QUEUE_VERSION_CONFLICT\"}"
                     BatchAddResult.KEY_REUSED -> 409 to "{\"error\":\"IDEMPOTENCY_KEY_REUSED\"}"
                     else -> 503 to "{\"error\":\"COMMAND_STORAGE_ERROR\"}"
