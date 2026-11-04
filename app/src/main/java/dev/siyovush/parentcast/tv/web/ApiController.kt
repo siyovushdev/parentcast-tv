@@ -35,6 +35,7 @@ internal class ApiController(
     private val displayReady: (() -> Boolean)? = null,
     private val localMedia: dev.siyovush.parentcast.tv.local.LocalVideoApi? = null,
     private val mediaTitle: (String) -> String = { "" },
+    private val thumbnail: ((String, String) -> ApiResponse)? = null,
 ) {
     fun handle(request: ApiRequest): ApiResponse {
         if (!security.isHostAllowed(request.headers["host"])) {
@@ -44,6 +45,7 @@ internal class ApiController(
         if (request.method == "OPTIONS") return ApiResponse(403, error("FORBIDDEN"))
         return when {
             request.method == "GET" && request.path == "/" -> staticAsset("web/index.html", "text/html; charset=utf-8")
+            request.method == "GET" && request.path == "/thumbnails.js" -> staticAsset("web/thumbnails.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/app.js" -> staticAsset("web/app.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/groups.js" -> staticAsset("web/groups.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/sections.js" -> staticAsset("web/sections.js", "text/javascript; charset=utf-8")
@@ -86,6 +88,7 @@ internal class ApiController(
 
     private fun authorizedApi(request: ApiRequest): ApiResponse {
         val device = authorizedDevice(request.headers) ?: return ApiResponse(401, error("UNAUTHORIZED"))
+        if (request.method == "GET" && request.path.startsWith("/api/thumbnails/")) return thumbnail?.invoke(request.path.removePrefix("/api/thumbnails/"), device.deviceId) ?: ApiResponse(404, error("NOT_FOUND"))
         if (request.method == "GET" && request.path == "/api/state") return ApiResponse(200, stateBody())
         if (request.method == "GET" && request.path == "/api/prepared") return ApiResponse(200, prepared?.state()?.toString() ?: "{}")
         if (request.method == "GET" && request.path == "/api/devices") return devices()

@@ -44,6 +44,6 @@ class VkPlaylistParser {
             title.lowercase() in setOf("[deleted video]","[private video]","видео удалено","видео недоступно")
         val state=when { unavailable -> PlaylistAvailability.UNAVAILABLE;unsupported -> PlaylistAvailability.UNSUPPORTED;availability=="public" -> PlaylistAvailability.AVAILABLE;else -> PlaylistAvailability.UNKNOWN }
         return PlaylistEntry(index,id,title.ifBlank { "Видео VK: ${id?.removePrefix("vk:") ?: index}" },state,
-            !unavailable && !unsupported && title.isNotBlank() && duration!=null,duration,null)
+            !unavailable && !unsupported && title.isNotBlank() && duration!=null,duration,null,node.path("thumbnail").takeIf { it.isTextual }?.asText())
     }
 }

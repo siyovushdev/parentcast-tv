@@ -20,6 +20,9 @@ internal class PlaylistApi(
     private val metadataTitle: (String) -> String = { "" },
     private val stateBody: () -> String,
 ) {
+    fun containsVideo(owner: String, id: String): Boolean = previews.containsVideo(owner, id) ||
+        collections.list().any { id in it.videoIds }
+
     fun handles(path: String): Boolean = path in setOf(
         "/api/playlists/preview", "/api/playlists/cancel", "/api/playlists/apply",
         "/api/collections/save", "/api/collections/apply", "/api/collections/delete",

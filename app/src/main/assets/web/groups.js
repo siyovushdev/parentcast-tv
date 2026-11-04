@@ -22,16 +22,16 @@ function unavailableWatchLabel(item) {
     return state.prepared?.enabled ? "Ожидает загрузки" : "Сначала подготовьте";
 }
 function playlistRow(item, index, groupId) {
-    const current = state.items[state.currentIndex]?.queueItemId === item.queueItemId && (!state.activeGroupId || state.activeGroupId === groupId);
+    const current = state.items[state.currentIndex]?.queueItemId === item.queueItemId && ((state.activeGroupId || null) === (groupId || null));
     const row = document.createElement("div");row.className = `queue-item${current ? " current" : ""}`;
     const text = document.createElement("div");
     const title = document.createElement("div");title.textContent = `${index + 1}. ${item.title || "Название ещё не получено"}${current ? " — текущий" : ""}`;
     const meta = document.createElement("small");meta.className = "muted video-id";
     meta.textContent = `${item.local ? "Своё видео" : item.videoId.startsWith("vk:") ? "VK" : "YouTube"} · ${videoReady(item) ? "Готово офлайн" : unavailableWatchLabel(item)}${item.title ? "" : " · " + item.videoId}`;
-    text.append(title,meta);row.append(text);
+    text.append(title,meta);appendVideoThumbnail(text,item.videoId,item.title);row.append(text);
     const watch = document.createElement("button");watch.className = "secondary";
     watch.dataset.groupAction = "watch-video";watch.dataset.groupId = groupId || "";watch.dataset.itemId = item.queueItemId;
-    watch.textContent = videoCanWatch(item) ? "Смотреть" : unavailableWatchLabel(item);
+    watch.textContent = videoCanWatch(item) ? (current && state.positionMs>0 && !state.finished ? `Продолжить с ${resumeTime(state.positionMs)}` : "Смотреть") : unavailableWatchLabel(item);
     watch.disabled = groupRequestBusy || !videoCanWatch(item);row.append(watch);
     return row;
 }
@@ -49,7 +49,8 @@ function renderProgrammeGroups() {
     if(programmeViewKey === key) {
         byId("queue").querySelectorAll('button[data-group-action="watch-video"]').forEach(button=>{
             const item=state.items.find(e=>e.queueItemId===button.dataset.itemId);
-            if(item && !videoCanWatch(item))button.textContent=unavailableWatchLabel(item);
+            if(item)button.textContent=!videoCanWatch(item) ? unavailableWatchLabel(item) :
+                (state.items[state.currentIndex]?.queueItemId===item.queueItemId && ((state.activeGroupId || "") === (button.dataset.groupId || "")) && state.positionMs>0 && !state.finished ? `Продолжить с ${resumeTime(state.positionMs)}` : "Смотреть");
         });return;
     }
     programmeViewKey = key;
@@ -106,6 +107,10 @@ async function programmeAction(button) {
         } else if(action === "play" || action === "watch-video") {
             const item=action === "play" ? state.items.find(e=>e.videoId === group?.videoIds[0]) : state.items.find(e=>e.queueItemId === button.dataset.itemId);
             if(!item || !videoCanWatch(item))return;
+            if(action === "watch-video" && state.items[state.currentIndex]?.queueItemId===item.queueItemId &&
+                ((state.activeGroupId || "") === (id || "")) && state.positionMs>0 && !state.finished) {
+                await perform("resume-video-"+commandKey(),"/api/playback",{action:"PLAY",idempotencyKey:commandKey()});return;
+            }
             await perform("watch-playlist-"+commandKey(),"/api/queue/select",{queueItemId:item.queueItemId,groupId:id || undefined,queueVersion:state.queueVersion,positionMs:0,play:true,idempotencyKey:commandKey()});
         } else if(action === "up" || action === "down") {
             const ids=state.groups.map(g=>g.id),index=ids.indexOf(id),to=index+(action === "up"?-1:1);

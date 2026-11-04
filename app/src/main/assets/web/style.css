@@ -98,3 +98,17 @@ select { padding: 10px; border-radius: 8px; background: #101418; color: #fff; fo
 .programme-group .queue-item { grid-template-columns: minmax(0,1fr) auto; }
 .programme-group small { display: block; margin-top: 5px; }
 @media(max-width:600px) { .programme-group .queue-item { grid-template-columns: minmax(0,1fr); } }
+
+/* Fixed image space avoids jumping rows and keeps names and controls readable. */
+.has-video-thumbnail { position: relative; min-height: 82px; padding-left: 152px; }
+.video-thumbnail { position: absolute; left: 0; top: 0; display: flex; width: 140px; height: 79px; align-items: center; justify-content: center; border: 1px solid #40536a; border-radius: 9px; overflow: hidden; background: #101820; }
+.video-thumbnail img { width: 100%; height: 100%; object-fit: contain; }
+.thumbnail-placeholder { color: #9aa9b8; font-size: .8rem; text-align: center; }
+.current-video { min-height: 0; margin: 12px 0; }
+.current-video p { margin-top: 0; }
+.playlist-entry .has-video-thumbnail { display: block; }
+.download-row .has-video-thumbnail { margin-top: 0; }
+@media(max-width: 600px) {
+    .has-video-thumbnail { min-height: 65px; padding-left: 108px; }
+    .video-thumbnail { width: 98px; height: 56px; }
+}

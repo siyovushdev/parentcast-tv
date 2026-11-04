@@ -310,6 +310,12 @@ internal class PreparedLibrary(
         require(LOCAL_ID.matches(id))
         if (snapshot().entries[id] == null && synchronized(lock) { id !in importing }) store.delete(id)
     }
+    internal fun thumbnailFile(id: String): File? {
+        val snapshot = snapshot()
+        val entry = snapshot.entries[id] ?: return null
+        if (entry.status != PreparationStatus.READY || id in snapshot.deleting) return null
+        return store.track(id).takeIf { it.isFile }
+    }
     internal fun mediaTitle(id: String): String = snapshot().entries[id]?.title.orEmpty()
     internal fun localEntries(): List<PreparedEntry> = snapshot().entries.values.filter { it.local && it.status == PreparationStatus.READY && it.id !in snapshot().deleting }
 

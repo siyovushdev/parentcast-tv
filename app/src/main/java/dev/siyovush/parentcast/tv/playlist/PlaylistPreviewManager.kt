@@ -64,6 +64,12 @@ class PlaylistPreviewManager(
     }
 
     @Synchronized
+    fun containsVideo(owner: String, videoId: String): Boolean {
+        cleanup()
+        return records.values.any { it.owner == owner && it.preview.result?.entries?.any { e -> e.videoId == videoId } == true }
+    }
+
+    @Synchronized
     fun cancel(owner: String, id: String): PlaylistPreview? {
         cleanup()
         val record = records[id]?.takeIf { it.owner == owner } ?: return null

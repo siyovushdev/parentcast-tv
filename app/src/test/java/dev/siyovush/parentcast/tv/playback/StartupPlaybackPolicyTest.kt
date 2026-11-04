@@ -21,6 +21,30 @@ import java.io.IOException
 @OptIn(ExperimentalCoroutinesApi::class)
 class StartupPlaybackPolicyTest {
     @Test
+    fun diskRestoreRetainsPlaylistAndPositionAfterPauseAndInterruptedPlay() = runTest {
+        val dir = java.nio.file.Files.createTempDirectory("parentcast-resume").toFile()
+        try {
+            listOf(PlaybackIntent.PAUSE, PlaybackIntent.PLAY).forEach { intent ->
+                val base=queue(intent)
+                val group=dev.siyovush.parentcast.tv.queue.QueueGroup("g_"+"a".repeat(32),"Fixture",listOf("video000002","video000001"),dev.siyovush.parentcast.tv.queue.QueueGroupSource.COLLECTION)
+                val original=base.copy(groups=listOf(group),activeGroupId=group.id)
+                val file=java.io.File(dir,"queue.json")
+                dev.siyovush.parentcast.tv.queue.AtomicQueueStore(file).write(original)
+                val player=StartupPlayer()
+                val restored=PlaybackCoordinator(StartupSource(),dev.siyovush.parentcast.tv.queue.AtomicQueueStore(file),player,this,StandardTestDispatcher(testScheduler),autoResumeOnStartup=false)
+                restored.start();advanceUntilIdle()
+                assertEquals(42_000,restored.currentSnapshot().queueState.positionMs)
+                assertEquals(group.id,restored.currentSnapshot().queueState.activeGroupId)
+                assertEquals(listOf(StartupPreparation("video000002",42_000,false)),player.prepared)
+                restored.play()
+                assertEquals(1,player.playCalls)
+                assertEquals(42_000,restored.currentSnapshot().queueState.positionMs)
+                restored.close()
+            }
+        } finally {dir.deleteRecursively()}
+    }
+
+    @Test
     fun liveOwnerResumesOnlyUnfinishedPlayWithoutStorageWarnings() {
         val playing = CoordinatorSnapshot(queueState = queue(PlaybackIntent.PLAY))
         assertTrue(StartupPlaybackPolicy.resumeLiveOwner(playing))
