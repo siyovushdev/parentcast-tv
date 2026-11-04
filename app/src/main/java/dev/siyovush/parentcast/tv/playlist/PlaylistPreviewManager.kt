@@ -25,7 +25,7 @@ class PlaylistPreviewManager(
     @Synchronized
     fun start(owner: String, url: String): PlaylistPreview {
         check(!closed) { "Preview manager closed" }
-        val playlistId = YouTubePlaylistIdParser.parse(url)
+        val playlistId = dev.siyovush.parentcast.tv.media.OnlineMediaIds.parsePlaylist(url)
         cleanup()
         // One active extraction per browser prevents accidental resource exhaustion while preserving
         // other owners' ready previews. Old results cannot overwrite the new preview.

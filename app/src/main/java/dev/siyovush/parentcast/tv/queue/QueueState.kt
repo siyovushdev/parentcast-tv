@@ -7,12 +7,9 @@ data class QueueItem(
 ) {
     init {
         require(queueItemId.isNotBlank())
-        require(if (local) Regex("local_[0-9a-f]{32}").matches(videoId) else VIDEO_ID_PATTERN.matches(videoId))
+        require(if (local) Regex("local_[0-9a-f]{32}").matches(videoId) else dev.siyovush.parentcast.tv.media.OnlineMediaIds.isOnline(videoId))
     }
 
-    companion object {
-        private val VIDEO_ID_PATTERN = Regex("[A-Za-z0-9_-]{11}")
-    }
 }
 
 enum class PlaybackIntent {

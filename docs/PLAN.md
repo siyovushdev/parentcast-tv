@@ -75,3 +75,11 @@ M0–M3 объединены в main по отдельному разрешен�
 от5ba1a51. Единая фильтрация videoId, atomic receipt/added+skipped/no-op version, busy/queued UI.
 Обычный v8 update без очистки и H728 API PASS;230 JVM tests/lint/JS PASS. Отдельный Draft PR
 к PR #10, без Merge. Chrome UI NOT_RUN из-за инструмента; reports/Queue-deduplication.md.
+
+## После HOME BETA — VK
+
+Запрос владельца04.11.2026: tasks/VK-video-import.md, codex/vk-video-import отfea823e,
+stacked к Draft PR #11, без Merge. Анонимные VK-видео и статические плейлисты, pinned yt-dlp
+с opt-in metadata adapter, provider IDs, полная подготовка/локальный просмотр, прежние
+queueVersion/receipt/dedup/подборки/защита API. M4 и privileged не активируются.
+Результаты и ограничения: reports/VK-video-import.md.

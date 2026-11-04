@@ -4,7 +4,6 @@ import dev.siyovush.parentcast.tv.playback.CoordinatorSnapshot
 import dev.siyovush.parentcast.tv.playback.PlaybackCoordinator
 import dev.siyovush.parentcast.tv.queue.IdempotencyStore
 import dev.siyovush.parentcast.tv.queue.StoredResponse
-import dev.siyovush.parentcast.tv.youtube.YouTubeVideoIdParser
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -185,7 +184,7 @@ internal class ApiController(
         val links = json.optJSONArray("links") ?: return badRequest()
         if (links.length() == 0 || links.length() > 20) return badRequest()
         val videoIds = try {
-            List(links.length()) { index -> YouTubeVideoIdParser.parse(links.getString(index)) }
+            List(links.length()) { index -> dev.siyovush.parentcast.tv.media.OnlineMediaIds.parseLink(links.getString(index)) }
         } catch (error: Exception) {
             return badRequest()
         }
@@ -203,7 +202,7 @@ internal class ApiController(
     private fun playNow(json: JSONObject): Pair<Int, String> {
         if (displayReady?.invoke() == false) return 409 to error("OPEN_PLAYER_ON_TV")
         val videoId = try {
-            YouTubeVideoIdParser.parse(json.optString("videoId"))
+            dev.siyovush.parentcast.tv.media.OnlineMediaIds.parseLink(json.optString("videoId"))
         } catch (error: Exception) {
             return badRequest()
         }

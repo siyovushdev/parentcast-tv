@@ -6,9 +6,9 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 
-internal val VIDEO_ID = Regex("[A-Za-z0-9_-]{11}")
+internal val VIDEO_ID = Regex(dev.siyovush.parentcast.tv.media.OnlineMediaIds.ONLINE_PATTERN)
 internal val LOCAL_ID = Regex("local_[0-9a-f]{32}")
-internal val MEDIA_ID = Regex("(?:[A-Za-z0-9_-]{11}|local_[0-9a-f]{32})")
+internal val MEDIA_ID = Regex(dev.siyovush.parentcast.tv.media.OnlineMediaIds.MEDIA_PATTERN)
 internal const val LIBRARY_LIMIT = 10L * 1024 * 1024 * 1024
 internal const val FREE_RESERVE = 1024L * 1024 * 1024
 internal enum class PreparationStatus { WAITING, DOWNLOADING, READY, ERROR, DELETED, RETRY_WAIT }
@@ -80,7 +80,7 @@ internal class PreparedStore(val directory: File) {
     private fun mediaFiles(id: String) = listOf(track(id), track(id, true)).flatMap { listOf(it, File(it.path + ".part"), File(it.path + ".resume.json"), File(it.path + ".resume.json.tmp")) }
     fun retainedBytes(id: String): Long = listOf(track(id), track(id,true)).sumOf { if (it.isFile) it.length() else File(it.path+".part").length() }
     fun mediaIds(): Set<String> = directory.listFiles().orEmpty().map { it.name }
-        .filter { it.matches(Regex("(?:[A-Za-z0-9_-]{11}|local_[0-9a-f]{32})[.](video|audio)[.]mp4([.]part)?")) }.map { it.substringBefore('.') }.toSet()
+        .filter { it.matches(Regex(dev.siyovush.parentcast.tv.media.OnlineMediaIds.MEDIA_PATTERN + "[.](video|audio)[.]mp4([.]part)?")) }.map { it.substringBefore('.') }.toSet()
     fun deleteChecked(id: String) {
         mediaFiles(id).forEach { file ->
             check(!file.exists() || file.delete()) { "DELETE_FAILED" }

@@ -20,6 +20,18 @@ class PreparedLibraryTest {
         check(allowance >= 3) { "NO_SPACE" }; target.writeBytes(byteArrayOf(1, 2, 3)); progress(3, 3)
         LocalTrack(target.name, 3, sha256(target))
     }
+    @Test fun vkNeverFallsBackToNetworkPlaybackAndReadyWorksWithPreparationDisabled() = runBlocking {
+        val id="vk:-227392256_456239129";val storage=store()
+        val source=object: YouTubeSource { override suspend fun resolve(videoId: String)=video(videoId) }
+        val library=PreparedLibrary(storage,source,downloader(),this,{ _,_,_-> })
+        val forbidden=object: YouTubeSource { override suspend fun resolve(videoId: String): ResolvedVideo=error("Must never stream VK") }
+        val wrapper=PreparedYouTubeSource(library,forbidden)
+        assertThrows(YouTubeSourceException::class.java) { runBlocking { wrapper.resolve(id) } }
+        library.configure(true,listOf(id));library.runWorker();library.configure(false,listOf(id))
+        assertTrue(wrapper.resolve(id).video.url.startsWith("file:"))
+        assertEquals(listOf(id),storage.mediaIds().toList())
+    }
+
     @Test fun completeResponseOnlyAndLimitsAndCancellation() {
         val f = File(temporary.root, "test.part")
         assertEquals(3, copyCompleteTrack(ByteArrayInputStream(byteArrayOf(1, 2, 3)), f, 3, 3, { FREE_RESERVE + 20 }))

@@ -10,12 +10,13 @@ import kotlinx.coroutines.runInterruptible
 import java.util.UUID
 
 /** Anonymous playlist metadata only. Existing playback cookies are neither opened nor modified. */
-class YtDlpPlaylistSource(context: Context) : PlaylistSource {
+class YtDlpPlaylistSource(private val context: Context) : PlaylistSource {
     private val runtime = YtDlpRuntime(context.applicationContext)
     private val parser = YtDlpPlaylistParser()
 
     override suspend fun fetch(playlistId: String): PlaylistResult = runInterruptible(Dispatchers.IO) {
-        require(YouTubePlaylistIdParser.isSupportedId(playlistId))
+        val vk=dev.siyovush.parentcast.tv.media.OnlineMediaIds.isVkPlaylist(playlistId)
+        require(vk || YouTubePlaylistIdParser.isSupportedId(playlistId))
         runtime.ensureInitialized()
         val processId = "parentcast-playlist-${UUID.randomUUID()}"
         try {
@@ -23,7 +24,7 @@ class YtDlpPlaylistSource(context: Context) : PlaylistSource {
             if (response.out.length > 16 * 1024 * 1024) {
                 PlaylistResult("", emptyList(), PlaylistStatus.ERROR, "Слишком большой ответ метаданных плейлиста.", null)
             } else {
-                parser.parse(response.out, response.err, response.exitCode)
+                if(vk) VkPlaylistParser().parse(response.out,response.err,response.exitCode,playlistId) else parser.parse(response.out, response.err, response.exitCode)
             }
         } catch (error: YoutubeDL.CanceledException) {
             throw CancellationException("Playlist extraction cancelled", error)
@@ -33,7 +34,7 @@ class YtDlpPlaylistSource(context: Context) : PlaylistSource {
             throw error
         } catch (_: Exception) {
             PlaylistResult("", emptyList(), PlaylistStatus.ERROR,
-                "Не удалось получить публичный плейлист: ошибка сети или yt-dlp. Можно повторить предпросмотр.", null)
+                "Не удалось получить плейлист YouTube/VK: ошибка сети или yt-dlp. Можно повторить предпросмотр.", null)
         } finally {
             // runInterruptible interrupts the blocking execute/join on cancel, unlike a completion
             // callback on its still-running Job. Library 0.18.1 destroys the process on interruption.
@@ -43,7 +44,7 @@ class YtDlpPlaylistSource(context: Context) : PlaylistSource {
     }
 
     private fun createRequest(playlistId: String): YoutubeDLRequest =
-        YoutubeDLRequest("https://www.youtube.com/playlist?list=$playlistId")
+        YoutubeDLRequest(if(dev.siyovush.parentcast.tv.media.OnlineMediaIds.isVkPlaylist(playlistId)) dev.siyovush.parentcast.tv.media.OnlineMediaIds.playlistUrl(playlistId) else "https://www.youtube.com/playlist?list=$playlistId")
             .addOption("--ignore-config")
             .addOption("--flat-playlist")
             .addOption("--skip-download")
@@ -55,5 +56,23 @@ class YtDlpPlaylistSource(context: Context) : PlaylistSource {
             .addOption("--retries", 1)
             .addOption("--extractor-retries", 1)
             .addOption("--no-cache-dir")
-            .addOption("--no-progress")
+            .addOption("--no-progress").also { request ->
+                if(dev.siyovush.parentcast.tv.media.OnlineMediaIds.isVkPlaylist(playlistId)) {
+                    request.addOption("--plugin-dirs", installVkPlugin()).addOption("--use-extractors", "vk:uservideos.*")
+                }
+            }
+
+    @Synchronized
+    private fun installVkPlugin(): String {
+        val root=java.io.File(context.noBackupFilesDir,"vk-metadata-plugins")
+        val target=java.io.File(root,"parentcast/yt_dlp_plugins/extractor/parentcast_vk.py")
+        val bytes=context.resources.openRawResource(dev.siyovush.parentcast.tv.R.raw.parentcast_vk).use { it.readBytes() }
+        if(!target.isFile || !target.readBytes().contentEquals(bytes)) {
+            check(target.parentFile!!.mkdirs() || target.parentFile!!.isDirectory)
+            val temp=java.io.File(target.path+".tmp")
+            java.io.FileOutputStream(temp).use { it.write(bytes);it.fd.sync() }
+            check(temp.renameTo(target));target.setReadable(true,true)
+        }
+        return root.path
+    }
 }

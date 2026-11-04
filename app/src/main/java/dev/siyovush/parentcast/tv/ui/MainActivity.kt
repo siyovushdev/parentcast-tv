@@ -28,7 +28,6 @@ import dev.siyovush.parentcast.tv.queue.AtomicIdempotencyStore
 import dev.siyovush.parentcast.tv.queue.AtomicQueueStore
 import dev.siyovush.parentcast.tv.queue.QueueItem
 import dev.siyovush.parentcast.tv.youtube.ytdlp.YtDlpYouTubeSource
-import dev.siyovush.parentcast.tv.youtube.YouTubeVideoIdParser
 import dev.siyovush.parentcast.tv.collections.AtomicCollectionStore
 import dev.siyovush.parentcast.tv.playlist.PlaylistPreviewManager
 import dev.siyovush.parentcast.tv.playlist.YtDlpPlaylistSource
@@ -351,7 +350,7 @@ open class MainActivity : Activity() {
     private fun addLink() {
         if (!requireParent()) return
         try {
-            val videoId = YouTubeVideoIdParser.parse(linkInput.text.toString())
+            val videoId = dev.siyovush.parentcast.tv.media.OnlineMediaIds.parseLink(linkInput.text.toString())
             coordinator.add(videoId)
             linkInput.text.clear()
             debugStatus.text = getString(R.string.debug_added, videoId)

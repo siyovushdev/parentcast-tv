@@ -145,10 +145,11 @@ class Media3PlaybackPlayer(
             .filterKeys { !it.equals("User-Agent", ignoreCase = true) }
             .toMutableMap()
         val isLocal = spec.url.startsWith("file:")
+        require(isLocal || spec.provider != dev.siyovush.parentcast.tv.media.MediaProvider.VK) { "VK requires a prepared private file" }
         if (isLocal) {
             val file = java.io.File(java.net.URI(spec.url)).canonicalFile
             val root = java.io.File(context.noBackupFilesDir, "prepared-programme").canonicalFile
-            require(file.parentFile == root && file.name.matches(Regex("(?:[A-Za-z0-9_-]{11}|local_[0-9a-f]{32})[.](video|audio)[.]mp4")))
+            require(file.parentFile == root && file.name.matches(Regex(dev.siyovush.parentcast.tv.media.OnlineMediaIds.MEDIA_PATTERN + "[.](video|audio)[.]mp4")))
         }
         val cookieHeader = if (isLocal) null else dev.siyovush.parentcast.tv.youtube.CookieHeaderCodec.merge(
             emptyList(), session.cookiesFor(spec.url.toHttpUrl()),

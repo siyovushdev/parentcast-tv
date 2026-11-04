@@ -28,7 +28,7 @@
 
     <div id="controlSection" hidden>
         <nav class="section-nav" aria-label="Разделы пульта">
-            <a href="#queueSection">Моя программа</a><a href="#addYoutubeSection">YouTube</a><a href="#localSection">Свои видео / USB</a><a href="#downloadsSection">Загрузки</a>
+            <a href="#queueSection">Моя программа</a><a href="#addYoutubeSection">YouTube / VK</a><a href="#playlistHeading">Плейлисты</a><a href="#localSection">Свои видео / USB</a><a href="#downloadsSection">Загрузки</a>
         </nav>
         <section class="card" aria-labelledby="homeConnectHeading">
             <h2 id="homeConnectHeading">Пульт для всей семьи</h2>
@@ -55,8 +55,8 @@
         </section>
 
         <section id="downloadsSection" class="card" aria-labelledby="preparedHeading">
-            <h2 id="preparedHeading">Загрузки YouTube</h2>
-            <p class="muted">Заранее скачайте YouTube-ролики из вашей программы. Свои видео уже доступны офлайн. В этом режиме показываются только полностью готовые файлы; следующие загружаются во время просмотра. Включение не запускает и не останавливает текущий ролик, режим применяется при следующем запуске.</p>
+            <h2 id="preparedHeading">Загрузки YouTube / VK</h2>
+            <p class="muted">Заранее скачайте ролики YouTube и VK из вашей программы. Свои видео уже доступны офлайн. В этом режиме показываются только полностью готовые файлы; следующие загружаются во время просмотра. Включение не запускает и не останавливает текущий ролик, режим применяется при следующем запуске.</p>
             <p class="muted">Лимит 10 ГиБ, резерв свободного места 1 ГиБ. Если следующий ролик не готов, придётся подождать. При обрыве сеть будет проверена автоматически. Часть файла сохраняется; докачка зависит от ответа сервера.</p>
             <p id="preparedSummary" role="status">Нет данных</p>
             <p id="preparedStorage" class="muted"></p>
@@ -76,13 +76,13 @@
 
         <section class="card">
             <h2>Включить сейчас</h2>
-            <label>YouTube-ссылка <input id="playNowLink" type="url" autocomplete="off" placeholder="https://youtu.be/…"></label>
+            <label>Ссылка YouTube или VK <input id="playNowLink" type="url" autocomplete="off" placeholder="https://youtu.be/…"></label>
             <button id="playNowButton">Включить сейчас</button>
         </section>
 
         <section class="card">
-            <h2 id="addYoutubeSection">Добавить YouTube-видео</h2>
-            <p class="muted">По одной ссылке на строку. Добавление не запускает воспроизведение.</p>
+            <h2 id="addYoutubeSection">Добавить видео YouTube / VK</h2>
+            <p class="muted">По одной ссылке на строку. Добавление не запускает воспроизведение. VK принимается без входа в аккаунт; перед просмотром нажмите «Подготовить очередь / продолжить» и дождитесь готовности.</p>
             <textarea id="links" rows="4" placeholder="https://www.youtube.com/watch?v=…&#10;https://youtu.be/…"></textarea>
             <button id="addButton">Добавить</button>
             <p id="commandMessage" class="message"></p>
@@ -122,7 +122,7 @@
                 <p id="usbMessage" class="message" role="status"></p><div id="usbFiles"></div>
                 <button id="usbImportButton" disabled>Скопировать выбранные на приставку</button>
             </details>
-            <p class="muted">Общий лимит с YouTube — 10 ГиБ; свободный резерв — 1 ГиБ. Поддерживаются MP4/MKV/WebM/3GP с кодеками приставки, без DRM. Исходные файлы не изменяются.</p>
+            <p class="muted">Общий лимит с YouTube и VK — 10 ГиБ; свободный резерв — 1 ГиБ. Поддерживаются MP4/MKV/WebM/3GP с кодеками приставки, без DRM. Исходные файлы не изменяются.</p>
             <div id="localImportJobs"></div>
             <div class="row"><h3>Уже на приставке</h3><button id="localRefreshButton" class="secondary">Обновить</button></div>
             <div class="controls"><button id="localSelectAll" class="secondary">Выбрать все</button><button id="localSelectNone" class="secondary">Снять выбор</button><button id="localAddSelected" disabled>Добавить выбранные в программу</button></div>
@@ -130,8 +130,8 @@
         </section>
 
         <section class="card" aria-labelledby="playlistHeading">
-            <h2 id="playlistHeading">Импорт YouTube-плейлиста</h2>
-            <p class="muted">Публичный статический плейлист, до 500 элементов. Предпросмотр и выбор не меняют очередь. Добавление не запускает воспроизведение.</p>
+            <h2 id="playlistHeading">Импорт плейлиста YouTube / VK</h2>
+            <p class="muted">Публичный статический плейлист YouTube или доступный без входа VK, до 500 элементов. Предпросмотр и выбор не меняют очередь. Добавление не запускает воспроизведение.</p>
             <label>Ссылка на плейлист <input id="playlistUrl" type="url" autocomplete="off" maxlength="2048" placeholder="https://www.youtube.com/playlist?list=…"></label>
             <div class="controls">
                 <button id="playlistPreviewButton">Получить предпросмотр</button>
@@ -146,7 +146,7 @@
                     <button id="playlistSelectNoneButton" class="secondary">Снять выбор</button>
                     <span id="playlistSelectedCount" class="muted"></span>
                 </div>
-                <p class="muted small">«Доступность не проверена» означает, что список YouTube содержит ролик, но возможность воспроизведения пока не подтверждена. Эфиры, премьеры и ограниченный доступ не поддерживаются.</p>
+                <p class="muted small">«Доступность не проверена» означает, что список содержит ролик, но возможность воспроизведения пока не подтверждена. Эфиры, премьеры и ограниченный доступ не поддерживаются.</p>
                 <div id="playlistEntries" class="playlist-entries"></div>
                 <div id="playlistConfirm" hidden>
                     <p id="playlistPartialNotice" class="error" hidden>PARTIAL: получена только часть плейлиста. Будут добавлены или сохранены только отмеченные элементы из полученной части.</p>

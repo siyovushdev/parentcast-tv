@@ -136,7 +136,9 @@ function renderState() {
     const current = state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
     byId("queueSummary").textContent = `Элемент ${current}/${state.items.length}; позиция ${Math.floor(state.positionMs / 1000)} с; intent ${state.intent}; версия ${state.queueVersion}`;
     byId("updatedAt").textContent = `Обновлено плеером: ${new Date(state.updatedAtMs).toLocaleString()}`;
-    byId("playbackError").textContent = state.error ? `${state.error.kind}: ${state.error.diagnostic || ""}` : "";
+    byId("playbackError").textContent = state.error && (state.error.diagnostic || "").includes("PREPARATION_REQUIRED")
+        ? "Для VK нажмите «Подготовить очередь / продолжить» и дождитесь готовности файла."
+        : state.error ? `${state.error.kind}: ${state.error.diagnostic || ""}` : "";
     byId("diagnostics").textContent = state.diagnostics || "";
     renderQueue();
     renderPrepared();
@@ -155,7 +157,7 @@ function renderPrepared() {
     rows.replaceChildren();
     const names = {WAITING: "В очереди загрузки", DOWNLOADING: "Скачивание", READY: "Готово", ERROR: "Ошибка", DELETED: "Файл удалён", DELETING: "Удаляем файл", RETRY_WAIT: "Ожидаем восстановления сети"};
     const phases = {INFO: "Получаем данные о ролике", VIDEO: "Загружаем видео", AUDIO: "Загружаем звук", VERIFY: "Проверяем загрузку"};
-    const errors = {STORAGE_ERROR: "Хранилище недоступно. Проверьте место и повторите подготовку",UNAVAILABLE: "Ролик больше недоступен на YouTube",YOUTUBE_AUTH_REQUIRED: "YouTube требует авторизацию. Включите действующую тестовую сессию на ТВ и повторите подготовку", NO_SPACE: "Недостаточно места в лимите / свободного места", UNSUPPORTED: "Нужен публичный завершённый ролик", NETWORK_RETRY: "Сеть прервалась. Повторим автоматически", DOWNLOAD_FAILED: "Загрузка прервана. Проверьте сеть и нажмите «Повторить ошибки»", FILE_DAMAGED: "Файл повреждён. Повторите загрузку"};
+    const errors = {STORAGE_ERROR: "Хранилище недоступно. Проверьте место и повторите подготовку",UNAVAILABLE: "Ролик больше недоступен у источника",YOUTUBE_AUTH_REQUIRED: "YouTube требует авторизацию. Включите действующую тестовую сессию на ТВ и повторите подготовку", NO_SPACE: "Недостаточно места в лимите / свободного места", UNSUPPORTED: "Нужен публичный завершённый ролик", NETWORK_RETRY: "Сеть прервалась. Повторим автоматически", DOWNLOAD_FAILED: "Загрузка прервана. Проверьте сеть и нажмите «Повторить ошибки»", FILE_DAMAGED: "Файл повреждён. Повторите загрузку"};
     s.entries.forEach(e => {
         const row = document.createElement("div");
         row.className = "download-row";
@@ -563,7 +565,7 @@ function renderPreview() {
     byId("playlistTitle").textContent = preview.title || "Плейлист";
     const reported = preview.reportedCount == null ? "неизвестно" : String(preview.reportedCount);
     const selectableCount = entries.filter(entry => entry.selectable).length;
-    byId("playlistCount").textContent = `Получено: ${entries.length}; заявлено YouTube: ${reported}; допускаются к выбору: ${selectableCount}. Исходный порядок сохранён.`;
+    byId("playlistCount").textContent = `Получено: ${entries.length}; заявлено ${preview.provider === "VK" ? "VK" : "YouTube"}: ${reported}; допускаются к выбору: ${selectableCount}. Исходный порядок сохранён.`;
     byId("playlistEntries").replaceChildren();
     byId("playlistSelection").hidden = !previewCanApply();
     byId("playlistConfirm").hidden = !previewCanApply();
@@ -580,7 +582,7 @@ function renderPreview() {
         input.disabled = !entry.selectable || !previewCanApply();
         const content = document.createElement("span");
         const title = document.createElement("strong");
-        title.textContent = `${entry.index}. ${entry.title || "Без названия"}`;
+        title.textContent = `${entry.index}. ${preview.provider === "VK" ? "VK · " : ""}${entry.title || "Без названия"}`;
         const meta = document.createElement("span");
         meta.className = "muted small entry-meta";
         meta.textContent = [entry.videoId, entry.channel, formatDuration(entry.durationSeconds), availabilityNames[entry.availability] || "Доступность не проверена"].filter(Boolean).join(" · ");
@@ -630,7 +632,7 @@ async function startPreview() {
     if (previewRequesting) return;
     const url = byId("playlistUrl").value.trim();
     if (!url) {
-        byId("playlistMessage").textContent = "Вставьте ссылку на публичный YouTube-плейлист.";
+        byId("playlistMessage").textContent = "Вставьте ссылку на плейлист YouTube или VK.";
         return;
     }
     previewRequesting = true;
@@ -641,7 +643,7 @@ async function startPreview() {
         await perform(`preview-${commandKey()}`, "/api/playlists/preview", {url, idempotencyKey: commandKey()});
     } catch (error) {
         byId("playlistMessage").textContent = error.status === 400
-            ? "Предпросмотр отклонён: проверьте ссылку на публичный статический YouTube-плейлист."
+            ? "Предпросмотр отклонён: проверьте ссылку на публичный статический плейлист YouTube/VK. Для VK вход в аккаунт не поддерживается."
             : error.status >= 400 && error.status < 500
                 ? `Предпросмотр отклонён: ${apiErrorText(error)}`
                 : "Ответ на запрос предпросмотра не получен. Используйте кнопку повтора сохранённой команды.";

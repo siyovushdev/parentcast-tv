@@ -111,7 +111,7 @@ class PlaybackCoordinator(
 
     /** One queue transaction; no player calls and no change of playback intent. */
     fun addBatch(videoIds: List<String>, expectedVersion: Long, commandKey: String, requestFingerprint: String? = null, local: Boolean = false): BatchAddResult {
-        require(videoIds.size in 1..500 && videoIds.all { if(local) Regex("local_[0-9a-f]{32}").matches(it) else Regex("[A-Za-z0-9_-]{11}").matches(it) })
+        require(videoIds.size in 1..500 && videoIds.all { if(local) Regex("local_[0-9a-f]{32}").matches(it) else dev.siyovush.parentcast.tv.media.OnlineMediaIds.isOnline(it) })
         require(commandKey.length in 8..300)
         if (closed) return BatchAddResult.STORAGE_ERROR
         val fingerprint = requestFingerprint ?: java.security.MessageDigest.getInstance("SHA-256")
@@ -146,13 +146,17 @@ class PlaybackCoordinator(
         return BatchAddResult.APPLIED
     }
 
+    private fun currentNeedsYouTubeSession(): Boolean = state.currentItem?.let {
+        !it.local && !dev.siyovush.parentcast.tv.media.OnlineMediaIds.isVk(it.videoId)
+    } ?: true
+
     fun play() {
         if (closed || state.items.isEmpty()) return
         state = state.play()
         error = null
         refreshAttempted = false
         persist()
-        if (!authorizationGate() && state.currentItem?.local != true) {
+        if (!authorizationGate() && currentNeedsYouTubeSession()) {
             status = PlaybackStatus.WAITING_FOR_SESSION
             emit()
             return
@@ -169,7 +173,7 @@ class PlaybackCoordinator(
 
     fun onSessionChanged() {
         if (closed || startupStorageBlocked) return
-        if (!authorizationGate() && state.currentItem?.local != true) {
+        if (!authorizationGate() && currentNeedsYouTubeSession()) {
             if (state.intent != PlaybackIntent.STOP && !state.finished) {
                 status = PlaybackStatus.WAITING_FOR_SESSION
                 emit()
@@ -254,7 +258,7 @@ class PlaybackCoordinator(
         error = null
         refreshAttempted = false
         persist()
-        if (!authorizationGate() && state.currentItem?.local != true) {
+        if (!authorizationGate() && currentNeedsYouTubeSession()) {
             status = PlaybackStatus.WAITING_FOR_SESSION
             emit()
             return
@@ -446,7 +450,7 @@ class PlaybackCoordinator(
 
     private fun prepareCurrent(preserveRefreshAttempt: Boolean = false) {
         val current = state.currentItem ?: return
-        if (!authorizationGate() && state.currentItem?.local != true) {
+        if (!authorizationGate() && currentNeedsYouTubeSession()) {
             status = PlaybackStatus.WAITING_FOR_SESSION
             emit()
             return
