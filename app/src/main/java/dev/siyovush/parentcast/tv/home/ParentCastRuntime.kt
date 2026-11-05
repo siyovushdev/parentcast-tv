@@ -78,7 +78,7 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
         api = ApiController(pairing, tokens, AtomicIdempotencyStore(File(app.filesDir, "idempotency.json")), coordinator,
             dispatcher, RequestSecurity(emptySet(), PORT) { addresses.panelHosts() + network.aliases() },
             { path -> app.assets.open(path).bufferedReader().use { it.readText() } }, playlists,
-            PreparedApi(prepared, coordinator, dispatcher), connectUrls = { network.urls() }, displayReady = { dispatcher.call { player.hasVisibleView() } }, localMedia = localMedia, mediaTitle = prepared::mediaTitle, mediaDuration = ::mediaDuration,
+            PreparedApi(prepared, coordinator, dispatcher, ::mediaDuration), connectUrls = { network.urls() }, displayReady = { dispatcher.call { player.hasVisibleView() } }, localMedia = localMedia, mediaTitle = prepared::mediaTitle, mediaDuration = ::mediaDuration,
             thumbnail = { id, owner ->
                 val allowed = dispatcher.call { coordinator.currentSnapshot().queueState.items.any { it.videoId == id } } ||
                     prepared.localEntries().any { it.id == id } || playlists.containsVideo(owner, id)

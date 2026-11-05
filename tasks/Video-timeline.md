@@ -18,7 +18,7 @@
 
 Проверки: JVM/JS, debug/release compile/lint, реальный Chrome/H728, сохранность данных.
 
-Результаты:277JVM PASS; lint0errors/46warnings; debug/release Kotlin compile,
+Результаты:278JVM PASS; lint0errors/46warnings; debug/release Kotlin compile,
 6JS syntax checks и7web contract scripts PASS. Обычный debugv13 обновлён на H728.
 Chrome headless: реальный drag,1POST после отпускания,−10/+10с, seek при PLAY,
 PAUSE сохранена;129элементов/3плейлиста сохранены, исходная позиция110494ms восстановлена.

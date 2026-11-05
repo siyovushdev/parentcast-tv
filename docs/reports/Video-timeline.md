@@ -12,6 +12,9 @@
   yt-dlp, без загрузки медиа и без изменения очереди. Один worker/8pending, cache10000ID,
   неуспех повторяется через5мин. Неизвестное не подменяется0:00. Данные производные,
   отдельный cache JSON; формат queuev3 и saved-collections не изменён.
+- В загрузках используется fallback к сохранённым метаданным даже до скачивания файла.
+  Длинные названия с подчёркиваниями переносятся и не растягивают мобильную страницу;
+  обложка текущего ролика имеет собственную высоту и не перекрывает состояние плейлиста.
 - Контроллер под текущим роликом: позиция/общая длина, range drag/tap/keyboard,−10/+10с.
   Положение обновляется во время воспроизведения; drag не отправляет HTTP на каждый пиксель.
 - POST `/api/playback/seek` с текущими queueItemId/queueVersion/playbackGeneration,
@@ -35,13 +38,14 @@ for script in tools/*web*test.mjs; do node "$script"; done
 git diff --check
 ```
 
-277JVM PASS,0failures/errors/skipped. Lint0errors/46warnings. Debug APK и release Kotlin
+278JVM PASS,0failures/errors/skipped. Lint0errors/46warnings. Debug APK и release Kotlin
 compilation PASS. 6JS syntax checks и7web contract scripts PASS.
 
 Новые JVM проверки: вперёд/назад, сохранение PAUSE/PLAY/плейлиста/порядка, старые version и
 request generation после NEXT, неверные/граничные позиции, unavailable/STOP, ошибки записи,
 исключение seek/rollback, восстановление позиции, актуальная позиция без записи на каждый GET,
-асинхронные/синхронные playback callbacks. API: token/Host/Origin, integer input,
+асинхронные/синхронные playback callbacks, metadata duration для ожидающих загрузок
+без изменения готовности и без запуска скачивания. API: token/Host/Origin, integer input,
 идемпотентность/устаревший контекст. Кэш: bounded/dedup/один worker/перезапуск/negative retry.
 JS: input без POST до release, устойчивость drag при поллинге, старый жест после NEXT,
 ±10с, unavailable/unknown и восстановление controls после сетевой ошибки.
@@ -65,7 +69,7 @@ JS: input без POST до release, устойчивость drag при пол�
 | Финальное восстановление | PASS | PAUSE110494ms/тот же videoId/group; массив queueItemId/videoId и3группы неизменны |
 | Метаданные старого VK | PASS | COMPLETE61 entries существующего публичного VK-плейлиста, только preview/cancel, без apply; время подтянуто |
 | Длительности в реальном браузере | PASS | в браузерном прогоне126/129, при финальной проверке129/129;429406ms у текущего |
-| Интерфейс | PASS | Chrome headless desktop1280×900/mobile viewport390×844,0JS exceptions/нет horizontal overflow |
+| Интерфейс | PASS | Chrome headless desktop1280×900/mobile viewport390×844,0JS exceptions, scrollWidth=clientWidth=390, scale1, без horizontal overflow |
 | Сохранность доступа/данных | PASS | hashes PIN/access/tokens/collections/parent-mode/YouTube-session/USB preferences совпали |
 | Реальный телефон/USB/reboot/неподготовленный стрим | NOT_RUN | не нужны для принятой проверки, границы не расширялись |
 
@@ -84,10 +88,10 @@ HOME/Launcher/Happ/DO/system/privileged не менялись. Reboot не вы�
 versionName `0.1.0-video-timeline-beta-debug`.
 Домашний артефакт `.dev/parentcast-tv-v0.1-video-timeline-debug.apk`, локальная копия
 `artifacts/video-timeline/parentcast-tv-v0.1-video-timeline-debug.apk`.
-SHA-256 `6c242571e51719d8b505c9efb39477ec3c0e4dbe6e65a5755bf087886d228753`.
+SHA-256 `7dc8bcbf661b3240b9635f18e0b43f349028038755776f297a39d9cd338b9fd6`.
 Signer SHA-256 `de2cf22c47b6e4039da04107631b31d92ecddeb6984eeae5d43107337cceecf8`.
 Platform key не использовался. Временная защищённая копия обычного debug-key удалена.
-Предварительный APK5486… заменён финальным6c24…
+Предварительные APK этой задачи заменены финальным7dc8…
 
 Для недоступных источников длительность может остаться неизвестной; это не мешает уже
 готовым файлам. Начальное заполнение старой программы идёт в фоне, cache сохраняется.
