@@ -30,10 +30,14 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
         localSource = object : dev.siyovush.parentcast.tv.youtube.YouTubeSource { override suspend fun resolve(videoId: String) = prepared.localOrWait(videoId, own = true) ?: error("LOCAL_FILE_NOT_FOUND") })
     val tokens = AtomicTokenStore(File(app.filesDir, "device-tokens.json"))
     val pairing = PairingManager(SharedPinSettings(app), tokens)
+    private val durationSource = dev.siyovush.parentcast.tv.media.OnlineVideoSource(YtDlpYouTubeSource(app, session, publicOnly=true),dev.siyovush.parentcast.tv.media.VkVideoSource(app))
+    private val durations = MediaDurations(File(app.cacheDir,"video-durations.json"),scope,{id -> durationSource.resolve(id).durationSeconds})
+    private fun mediaDuration(id: String): Long? = prepared.mediaDuration(id) ?: durations.getOrRequest(id)
     private val thumbnailSource = AndroidThumbnails(app, prepared::thumbnailFile)
     private val thumbnails = ThumbnailApi(File(app.cacheDir, "web-thumbnails"), scope, thumbnailSource::generate)
     private val previews = PlaylistPreviewManager(PlaylistSource { id ->
         YtDlpPlaylistSource(app).fetch(id).also { result ->
+            durations.rememberAll(result.entries.mapNotNull { e -> e.videoId?.let { id -> e.durationSeconds?.let { id to it } } }.toMap())
             result.entries.forEach { entry -> entry.videoId?.let { thumbnailSource.remember(it, entry.thumbnailUrl) } }
         }
     })
@@ -70,11 +74,11 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
     init {
         lateinit var api: ApiController
         val playlists = PlaylistApi(previews, AtomicCollectionStore(File(app.noBackupFilesDir, "saved-collections.json")),
-            coordinator, dispatcher, metadataTitle=prepared::mediaTitle, stateBody={ api.stateBody() })
+            coordinator, dispatcher, metadataTitle=prepared::mediaTitle, metadataDuration=::mediaDuration, stateBody={ api.stateBody() })
         api = ApiController(pairing, tokens, AtomicIdempotencyStore(File(app.filesDir, "idempotency.json")), coordinator,
             dispatcher, RequestSecurity(emptySet(), PORT) { addresses.panelHosts() + network.aliases() },
             { path -> app.assets.open(path).bufferedReader().use { it.readText() } }, playlists,
-            PreparedApi(prepared, coordinator, dispatcher), connectUrls = { network.urls() }, displayReady = { dispatcher.call { player.hasVisibleView() } }, localMedia = localMedia, mediaTitle = prepared::mediaTitle,
+            PreparedApi(prepared, coordinator, dispatcher), connectUrls = { network.urls() }, displayReady = { dispatcher.call { player.hasVisibleView() } }, localMedia = localMedia, mediaTitle = prepared::mediaTitle, mediaDuration = ::mediaDuration,
             thumbnail = { id, owner ->
                 val allowed = dispatcher.call { coordinator.currentSnapshot().queueState.items.any { it.videoId == id } } ||
                     prepared.localEntries().any { it.id == id } || playlists.containsVideo(owner, id)
@@ -96,7 +100,7 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
     fun unobserve(observer: (CoordinatorSnapshot) -> Unit) { observers -= observer }
     fun close() {
         runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
-        handler.removeCallbacksAndMessages(null); server?.stop(); thumbnails.close(); previews.close(); network.close(); localMedia.close()
+        handler.removeCallbacksAndMessages(null); server?.stop(); durations.close(); thumbnails.close(); previews.close(); network.close(); localMedia.close()
         try { coordinator.savePosition() } finally { coordinator.close(); player.release(); scope.cancel(); observers.clear() }
     }
     companion object { const val PORT = 8765 }
