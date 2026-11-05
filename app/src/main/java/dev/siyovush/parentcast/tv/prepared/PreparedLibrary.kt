@@ -316,6 +316,7 @@ internal class PreparedLibrary(
         if (entry.status != PreparationStatus.READY || id in snapshot.deleting) return null
         return store.track(id).takeIf { it.isFile }
     }
+    internal fun mediaDuration(id: String): Long? = snapshot().entries[id]?.duration?.takeIf { it > 0 }
     internal fun mediaTitle(id: String): String = snapshot().entries[id]?.title.orEmpty()
     internal fun localEntries(): List<PreparedEntry> = snapshot().entries.values.filter { it.local && it.status == PreparationStatus.READY && it.id !in snapshot().deleting }
 

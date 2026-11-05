@@ -27,7 +27,7 @@ function playlistRow(item, index, groupId) {
     const text = document.createElement("div");
     const title = document.createElement("div");title.textContent = `${index + 1}. ${item.title || "Название ещё не получено"}${current ? " — текущий" : ""}`;
     const meta = document.createElement("small");meta.className = "muted video-id";
-    meta.textContent = `${item.local ? "Своё видео" : item.videoId.startsWith("vk:") ? "VK" : "YouTube"} · ${videoReady(item) ? "Готово офлайн" : unavailableWatchLabel(item)}${item.title ? "" : " · " + item.videoId}`;
+    meta.textContent = `${item.local ? "Своё видео" : item.videoId.startsWith("vk:") ? "VK" : "YouTube"} · ${formatDuration(item.durationSeconds)} · ${videoReady(item) ? "Готово офлайн" : unavailableWatchLabel(item)}${item.title ? "" : " · " + item.videoId}`;
     text.append(title,meta);appendVideoThumbnail(text,item.videoId,item.title);row.append(text);
     const watch = document.createElement("button");watch.className = "secondary";
     watch.dataset.groupAction = "watch-video";watch.dataset.groupId = groupId || "";watch.dataset.itemId = item.queueItemId;
@@ -44,7 +44,7 @@ function renderProgrammeGroups() {
     byId("editQueueOrder").hidden = groups.length > 0;
     byId("clearPendingButton").hidden = groups.length > 0;
     const key = JSON.stringify([groups,state.activeGroupId,state.currentIndex,state.prepared?.enabled,groupRequestBusy,
-        state.items.map(e => [e.queueItemId,e.title,e.ready,e.preparationStatus]),
+        state.items.map(e => [e.queueItemId,e.title,e.ready,e.preparationStatus,e.durationSeconds]),
         (state.prepared?.entries || []).map(e=>[e.videoId,e.status])]);
     if(programmeViewKey === key) {
         byId("queue").querySelectorAll('button[data-group-action="watch-video"]').forEach(button=>{

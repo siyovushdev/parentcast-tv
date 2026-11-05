@@ -42,7 +42,11 @@ data class CoordinatorSnapshot(
     val storageWarning: Boolean = false,
     val updatedAtMs: Long = 0,
     val localPlayback: Boolean = false,
+    val durationMs: Long? = null,
+    val seekable: Boolean = false,
 )
+
+enum class SeekResult { APPLIED, CONFLICT, UNAVAILABLE, STORAGE_ERROR, FAILED }
 
 interface PlaybackPlayer {
     fun setListener(listener: Listener)
@@ -50,6 +54,9 @@ interface PlaybackPlayer {
     fun play()
     fun pause()
     fun stop()
+    fun durationMs(): Long? = null
+    fun isSeekable(): Boolean = false
+    fun seekTo(positionMs: Long) { throw UnsupportedOperationException("Seeking unavailable") }
     fun currentPositionMs(): Long
     fun release()
 

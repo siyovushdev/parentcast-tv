@@ -7,7 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal class PreparedApi(private val library: PreparedLibrary, private val coordinator: PlaybackCoordinator, private val dispatcher: CallDispatcher) {
+internal class PreparedApi(private val library: PreparedLibrary, private val coordinator: PlaybackCoordinator, private val dispatcher: CallDispatcher, private val metadataDuration: (String) -> Long? = { null }) {
     fun readiness(id: String): String = library.snapshot().let { s -> if(id in s.deleting) "DELETING" else s.entries[id]?.status?.name ?: "WAITING" }
     fun canPlay(id: String): Boolean = readiness(id) == "READY" ||
         (!library.snapshot().enabled && !id.startsWith("local_") && !dev.siyovush.parentcast.tv.media.OnlineMediaIds.isVk(id))
@@ -17,14 +17,14 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
         s.plan.forEachIndexed { index, id ->
             val e = s.entries[id] ?: PreparedEntry(id)
             entries.put(JSONObject().put("index", index + 1).put("videoId", id).put("title", e.title.ifBlank { titles[id].orEmpty() }).put("status", if (id in s.deleting) "DELETING" else e.status.name)
-                .put("bytes", e.bytes).put("totalBytes", e.total.takeIf { e.totalKnown || e.status == PreparationStatus.READY } ?: JSONObject.NULL)
+                .put("durationSeconds",e.duration.takeIf { it>0 } ?: metadataDuration(e.id) ?: JSONObject.NULL).put("bytes", e.bytes).put("totalBytes", e.total.takeIf { e.totalKnown || e.status == PreparationStatus.READY } ?: JSONObject.NULL)
                 .put("percent", if (id in s.deleting) JSONObject.NULL else preparationPercent(e) ?: JSONObject.NULL).put("phase", e.phase)
                 .put("error", e.error).put("attempts", e.attempts).put("retryAtMs", e.retryAtMs))
         }
         val files = JSONArray()
         s.entries.values.filter { !it.local && (it.status == PreparationStatus.READY || it.id in s.deleting) }.forEach { e ->
             files.put(JSONObject().put("videoId", e.id).put("title", e.title).put("bytes", e.bytes)
-                .put("deleting", e.id in s.deleting).put("inQueue", e.id in s.plan))
+                .put("durationSeconds",e.duration.takeIf { it>0 } ?: metadataDuration(e.id) ?: JSONObject.NULL).put("deleting", e.id in s.deleting).put("inQueue", e.id in s.plan))
         }
         val storage = library.storageStats()
         return JSONObject().put("files", files).put("clearing", s.deleting.isNotEmpty()).put("operationError", s.operationError).put("usedBytes", storage.first).put("freeBytes", storage.second)

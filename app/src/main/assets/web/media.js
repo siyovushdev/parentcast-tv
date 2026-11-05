@@ -184,7 +184,7 @@ function renderQueueEditor() {
     order.forEach((id,index)=> {
         const item=map.get(id);if(!item)return;
         const row=document.createElement("div");row.className="queue-item";
-        const title=document.createElement("div");title.textContent=`${index+1}. ${item.title||item.videoId}${(queueOrder.groupId ? id===queueOrder.currentItemId : index===queueOrder.currentIndex)?" — текущий":""}`;appendVideoThumbnail(title,item.videoId,item.title);row.append(title);
+        const title=document.createElement("div");title.textContent=`${index+1}. ${item.title||item.videoId} · ${formatDuration(item.durationSeconds)}${(queueOrder.groupId ? id===queueOrder.currentItemId : index===queueOrder.currentIndex)?" — текущий":""}`;appendVideoThumbnail(title,item.videoId,item.title);row.append(title);
         const pendingIndex=queueOrder.ids.indexOf(id);
         if(pendingIndex>=0) {
             row.draggable=!stale;row.dataset.orderId=id;

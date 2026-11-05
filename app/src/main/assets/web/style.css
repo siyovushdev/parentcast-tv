@@ -112,3 +112,16 @@ select { padding: 10px; border-radius: 8px; background: #101418; color: #fff; fo
     .has-video-thumbnail { min-height: 65px; padding-left: 108px; }
     .video-thumbnail { width: 98px; height: 56px; }
 }
+
+.playback-timeline { margin: 16px 0; padding: 12px; background: #101820; border: 1px solid #40536a; border-radius: 10px; }
+.timeline-times { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.timeline-label { font-size: .85rem; color: #9aa9b8; margin: 8px 0 0; }
+#playheadSlider { padding: 0; height: 40px; accent-color: #8ab4f8; cursor: pointer; touch-action: pan-y; }
+#playheadSlider:disabled { opacity: .5; cursor: default; }
+
+/* Long provider titles must not zoom out the entire mobile controller. */
+.download-row, #preparedFiles { overflow-wrap: anywhere; }
+.current-video.has-video-thumbnail { min-height: 82px; }
+@media(max-width: 600px) { .current-video.has-video-thumbnail { min-height: 65px; } }
+
+.has-video-thumbnail { overflow-wrap: anywhere; }

@@ -52,6 +52,12 @@
             <div id="currentVideo" class="current-video"><p id="currentTitle"></p></div>
             <p id="displayMessage" class="muted"></p>
             <p id="queueSummary" class="muted"></p>
+            <div id="playbackTimeline" class="playback-timeline">
+                <div class="timeline-times"><span id="playheadTime">0:00</span><span id="videoDuration">—:—</span></div>
+                <label class="timeline-label" for="playheadSlider">Позиция текущего ролика</label>
+                <input id="playheadSlider" type="range" min="0" max="1" step="1" value="0" disabled aria-label="Позиция текущего ролика">
+                <div class="controls"><button type="button" id="seekBack" class="secondary" disabled>−10 с</button><button type="button" id="seekForward" class="secondary" disabled>+10 с</button><span id="seekMessage" class="muted small" role="status"></span></div>
+            </div>
             <p id="updatedAt" class="muted"></p>
             <p id="playbackError" class="error"></p>
             <p id="diagnostics" class="muted small"></p>
@@ -230,5 +236,6 @@
 <script src="/media.js"></script>
 <script src="/sections.js"></script>
 <script src="/groups.js"></script>
+<script src="/timeline.js"></script>
 </body>
 </html>
