@@ -13,7 +13,9 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
         (!library.snapshot().enabled && !id.startsWith("local_") && !dev.siyovush.parentcast.tv.media.OnlineMediaIds.isVk(id))
     fun state(): JSONObject {
         val s = library.snapshot(); val entries = JSONArray()
-        val titles=dispatcher.call { coordinator.currentSnapshot().queueState.items.associate { it.videoId to it.title } }
+        val queueItems=dispatcher.call { coordinator.currentSnapshot().queueState.items }
+        val titles=queueItems.associate { it.videoId to it.title }
+        val queueIds=queueItems.map { it.videoId }.toSet()
         s.plan.forEachIndexed { index, id ->
             val e = s.entries[id] ?: PreparedEntry(id)
             entries.put(JSONObject().put("index", index + 1).put("videoId", id).put("title", e.title.ifBlank { titles[id].orEmpty() }).put("status", if (id in s.deleting) "DELETING" else e.status.name)
@@ -24,7 +26,7 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
         val files = JSONArray()
         s.entries.values.filter { !it.local && (it.status == PreparationStatus.READY || it.id in s.deleting) }.forEach { e ->
             files.put(JSONObject().put("videoId", e.id).put("title", e.title).put("bytes", e.bytes)
-                .put("durationSeconds",e.duration.takeIf { it>0 } ?: metadataDuration(e.id) ?: JSONObject.NULL).put("deleting", e.id in s.deleting).put("inQueue", e.id in s.plan))
+                .put("durationSeconds",e.duration.takeIf { it>0 } ?: metadataDuration(e.id) ?: JSONObject.NULL).put("deleting", e.id in s.deleting).put("inQueue", e.id in queueIds))
         }
         val storage = library.storageStats()
         return JSONObject().put("files", files).put("clearing", s.deleting.isNotEmpty()).put("operationError", s.operationError).put("usedBytes", storage.first).put("freeBytes", storage.second)

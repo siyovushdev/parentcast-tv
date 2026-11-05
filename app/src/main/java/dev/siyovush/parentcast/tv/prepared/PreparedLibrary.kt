@@ -34,6 +34,7 @@ internal class PreparedLibrary(
     private val importing = mutableSetOf<String>()
     @Volatile private var active: Job? = null
     @Volatile private var activeId: String? = null
+    @Volatile private var queueReferences: Set<String>? = null
     init { if (state.deleting.isNotEmpty()) scope.launch { finishDeletion() } }
     fun storageStats(): Pair<Long, Long> = store.usedBytes() to store.directory.usableSpace
     fun snapshot(): PreparationState = synchronized(lock) { state }
@@ -51,6 +52,8 @@ internal class PreparedLibrary(
         persistLater();wakeService()
     }
     fun syncQueue(queue: dev.siyovush.parentcast.tv.queue.QueueState) {
+        // The preparation plan is a priority list, not the complete programme/library.
+        queueReferences = queue.items.map { it.videoId }.toSet()
         val target = snapshot().targetGroupId?.let { id -> queue.groups.find { it.id == id } }
         if (snapshot().targetGroupId != null && target == null) { update { it.copy(targetGroupId = null) }; persistLater() }
         val selected = target?.videoIds ?: queue.remainingItems().map { it.videoId }
@@ -141,7 +144,8 @@ internal class PreparedLibrary(
     suspend fun cleanup(): Int {
         check(worker.tryLock()) { "BUSY" }
         try {
-        val removable = snapshot().let { it.entries.filterValues { e -> !e.local }.keys - it.plan.toSet() }
+        val references = checkNotNull(queueReferences) { "BUSY" }
+        val removable = snapshot().let { it.entries.filterValues { e -> !e.local }.keys - it.plan.toSet() - references }
         removable.forEach(store::delete)
         update { it.copy(entries = it.entries - removable) }; persist(); return removable.size
         } finally { worker.unlock() }
@@ -175,7 +179,6 @@ internal class PreparedLibrary(
                     for ((index, spec) in streams.withIndex()) {
                         currentCoroutineContext().ensureActive()
                         if (id !in snapshot().plan) throw CancellationException("Queue item removed")
-                        if (store.usedBytes() >= limit) evictUnreferenced()
                         val target = store.track(id, index == 1)
                         val retained = if (target.exists()) target.length() else File(target.path + ".part").length()
                         val allowance = limit - store.usedBytes() + retained
@@ -219,10 +222,6 @@ internal class PreparedLibrary(
                         error.message == "UNSUPPORTED" || (error is YouTubeSourceException && error.failure.kind == PlaybackErrorKind.UNSUPPORTED) -> "UNSUPPORTED"
                         else -> "DOWNLOAD_FAILED"
                     }
-                    if (code == "NO_SPACE" && evictUnreferenced() > 0) {
-                        update { s1 -> s1.copy(entries = s1.entries + (id to PreparedEntry(id))) }; persist()
-                        continue // One retry after reclaiming watched/unreferenced files; never evict the remaining plan.
-                    }
                     val transient = code == "DOWNLOAD_FAILED" && (error is java.io.IOException || error is YouTubeSourceException)
                     if (transient) {
                         update { s1 -> val old = s1.entries.getValue(id); val attempt = (old.attempts + 1).coerceAtMost(1_000_000)
@@ -245,12 +244,6 @@ internal class PreparedLibrary(
                 s.copy(entries = s.entries + (id to if(old.status == PreparationStatus.DOWNLOADING) old.copy(status = PreparationStatus.WAITING, bytes = store.retainedBytes(id), phase = "WAITING", retryAtMs = 0) else old)) }
             persist()
         }
-    }
-    private suspend fun evictUnreferenced(): Int {
-        val s = snapshot(); val old = s.entries.filterValues { !it.local }.keys - s.plan.toSet()
-        old.forEach(store::delete)
-        if (old.isNotEmpty()) { update { it.copy(entries = it.entries - old) }; persist() }
-        return old.size
     }
     suspend fun localOrWait(id: String, own: Boolean = false, preparedOnly: Boolean = false): ResolvedVideo? {
         while (true) {
