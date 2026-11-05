@@ -237,18 +237,18 @@ class PreparedLibraryTest {
 
     @Test fun fullBudgetNeverAutomaticallyDeletesOtherPlaylistsOrUnqueuedReadyFiles() = runBlocking {
         for(capacity in 6L..7L) {
-        val storage=store();val third="video000003"
-        val library=PreparedLibrary(storage,object:YouTubeSource {override suspend fun resolve(videoId:String)=video(videoId)},downloader(),this,{_,_,_->},limit=capacity)
-        library.configure(true,listOf(first,second));library.runWorker()
-        assertEquals(6,storage.usedBytes())
+            val storage=store();val third="video000003"
+            val library=PreparedLibrary(storage,object:YouTubeSource {override suspend fun resolve(videoId:String)=video(videoId)},downloader(),this,{_,_,_->},limit=capacity)
+            library.configure(true,listOf(first,second));library.runWorker()
+            assertEquals(6,storage.usedBytes())
+            // Both the other playlist and a file retained after removing a queue item must survive.
+            library.configure(true,listOf(third));library.runWorker()
+            assertTrue(library.snapshot().paused)
+            assertEquals("NO_SPACE",library.snapshot().entries.getValue(third).error)
+            assertTrue(storage.verify(library.snapshot().entries.getValue(first)))
+            assertTrue(storage.verify(library.snapshot().entries.getValue(second)))
+            assertEquals(6,storage.usedBytes())
         }
-        // Both the other playlist and a file retained after removing a queue item must survive.
-        library.configure(true,listOf(third));library.runWorker()
-        assertTrue(library.snapshot().paused)
-        assertEquals("NO_SPACE",library.snapshot().entries.getValue(third).error)
-        assertTrue(storage.verify(library.snapshot().entries.getValue(first)))
-        assertTrue(storage.verify(library.snapshot().entries.getValue(second)))
-        assertEquals(6,storage.usedBytes())
     }
 
     @Test fun explicitCleanupProtectsTheWholeQueueRatherThanOnlyTheSelectedDownloadPlan() = runBlocking {
