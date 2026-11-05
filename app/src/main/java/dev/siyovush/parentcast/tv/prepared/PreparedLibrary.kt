@@ -83,7 +83,12 @@ internal class PreparedLibrary(
         if (!enabled) active?.cancel()
         update { s -> s.copy(enabled = enabled, paused = false, plan = ids, targetGroupId = targetGroupId,
             entries = (s.entries + ids.distinct().filterNot { it in s.entries }.associateWith { PreparedEntry(it) }).mapValues { (id, e) ->
-                if (enabled && id in ids && e.status == PreparationStatus.DELETED) PreparedEntry(id, title = e.title) else e
+                when {
+                    enabled && id in ids && e.status == PreparationStatus.DELETED -> PreparedEntry(id, title = e.title)
+                    enabled && id in ids && e.status in setOf(PreparationStatus.ERROR, PreparationStatus.RETRY_WAIT) ->
+                        e.copy(status = PreparationStatus.WAITING, error = "", attempts = 0, retryAtMs = 0, phase = "WAITING")
+                    else -> e
+                }
             }) }
         persist()
         preemptLater(snapshot())

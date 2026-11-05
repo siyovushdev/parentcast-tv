@@ -60,6 +60,7 @@
             </div>
             <p id="updatedAt" class="muted"></p>
             <p id="playbackError" class="error"></p>
+            <p id="preparationAlert" class="error" role="status" hidden></p>
             <p id="diagnostics" class="muted small"></p>
             <div class="actions">
                 <button id="resumePlayback" data-playback="PLAY">Смотреть</button>
@@ -132,9 +133,10 @@
                     <p class="muted">Плейлисты хранят свой порядок и запускаются отдельно. Порядок плейлистов и видео можно менять без остановки текущего ролика.</p>
                     <button id="editQueueOrder" class="secondary">Изменить порядок</button>
                     <div id="queueOrderTools" class="sort-tools" hidden>
-                        <label>Быстрая сортировка <select id="queueSortMode"><option value="title">По названию А–Я</option><option value="title-desc">По названию Я–А</option><option value="ready">Сначала готовые офлайн</option><option value="reverse">Обратный порядок</option></select></label>
+                        <label>Быстрая сортировка <select id="queueSortMode"><option value="episode">По номеру серии / урока: 1 → 2 → 10</option><option value="title">По названию А–Я</option><option value="title-desc">По названию Я–А</option><option value="ready">Сначала готовые офлайн</option><option value="reverse">Обратный порядок</option></select></label>
                         <button id="queueSortButton" class="secondary">Отсортировать список</button>
                         <p class="muted">Перетаскивайте мышью или используйте стрелки и номер позиции. Пока не нажата кнопка «Сохранить порядок», очередь не меняется.</p>
+                        <p class="muted">Номер серии определяется по #, №, «серия», «выпуск» или «урок» в названии. Видео без такого номера остаются в конце. VK может отдавать новые серии первыми: выберите сортировку и проверьте список перед сохранением.</p>
                         <button id="queueOrderApply">Сохранить порядок</button><button id="queueOrderCancel" class="secondary">Отменить</button>
                     </div>
                     <p id="queueOrderMessage" class="message" role="status"></p>

@@ -165,8 +165,14 @@ function renderPrepared() {
     if (!s) return;
     const gib = bytes => (Number(bytes || 0) / 1073741824).toFixed(1);
     const used = Number(s.usedBytes || 0) < 1073741824 ? (Number(s.usedBytes || 0) / 1048576).toFixed(1) + " МиБ" : gib(s.usedBytes) + " ГиБ";
-    byId("preparedSummary").textContent = `${s.enabled ? "Локальный режим" : "Потоковый режим"}${s.paused ? "; подготовка остановлена" : ""}. Готово в текущем плане: ${s.ready} из ${s.count}. Всего готовых файлов: ${(s.files || []).length}.${s.storageError ? " Ошибка хранилища подготовки." : ""}${s.clearing ? " Удаляем файлы…" : ""}${s.operationError ? " Не удалось удалить файлы; повторите после проверки хранилища." : ""}`;
-    byId("preparedStorage").textContent = `Скачано ${used} из ${gib(s.limitBytes)} ГиБ. Свободно на приставке ${gib(s.freeBytes)} ГиБ; резерв ${gib(s.reserveBytes)} ГиБ. Можно скачать ещё ${gib(s.additionalBytes)} ГиБ.`;
+    const noSpace = s.enabled && s.paused && !s.clearing && s.entries.some(e=>e.status === "ERROR" && e.error === "NO_SPACE");
+    const quotaFirst = Number(s.limitBytes)-Number(s.usedBytes) <= Number(s.freeBytes)-Number(s.reserveBytes);
+    const spaceWarning = noSpace ? `Загрузка остановлена: для следующего файла ${quotaFirst ? "не хватает места в лимите " + gib(s.limitBytes) + " ГиБ" : "не хватает свободного места с учётом резерва Android"}. Удалите ненужные скачанные файлы и нажмите «Подготовить плейлист» или «Подготовить очередь / продолжить». Повтор без освобождения места не поможет. Уже готовые видео доступны для просмотра.` : "";
+    byId("preparationAlert").hidden = !noSpace;
+    byId("preparationAlert").textContent = spaceWarning;
+    byId("preparedSummary").textContent = `${s.enabled ? "Локальный режим" : "Потоковый режим"}${s.paused ? "; подготовка остановлена" : ""}. Готово в текущем плане: ${s.ready} из ${s.count}. Всего готовых файлов: ${(s.files || []).length}.${spaceWarning ? " " + spaceWarning : ""}${s.storageError ? " Ошибка хранилища подготовки." : ""}${s.clearing ? " Удаляем файлы…" : ""}${s.operationError ? " Не удалось удалить файлы; повторите после проверки хранилища." : ""}`;
+    const available = Number(s.additionalBytes || 0) < 1073741824 ? (Number(s.additionalBytes || 0) / 1048576).toFixed(1) + " МиБ" : gib(s.additionalBytes) + " ГиБ";
+    byId("preparedStorage").textContent = `Скачано ${used} из ${gib(s.limitBytes)} ГиБ. Свободно на приставке ${gib(s.freeBytes)} ГиБ; резерв ${gib(s.reserveBytes)} ГиБ. Можно скачать ещё ${available}. Весь большой плейлист может не поместиться: готовые файлы не удаляются автоматически.`;
     const rows = byId("preparedEntries");
     rows.replaceChildren();
     const names = {WAITING: "В очереди загрузки", DOWNLOADING: "Скачивание", READY: "Готово", ERROR: "Ошибка", DELETED: "Файл удалён", DELETING: "Удаляем файл", RETRY_WAIT: "Ожидаем восстановления сети"};

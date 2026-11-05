@@ -25,4 +25,19 @@ const resumedRows=elements.get('queue').children[0].children.filter(n=>n.classNa
 assert.equal(resumedRows[0].children[1].textContent,'Продолжить с 0:42');
 await vm.runInContext(`programmeAction({dataset:{groupAction:'watch-video',groupId:'group-one',itemId:'a'}})`,ctx);
 request=JSON.parse(vm.runInContext('JSON.stringify(sent.at(-1))',ctx));assert.equal(request.path,'/api/playback');assert.equal(request.payload.action,'PLAY');assert.equal(request.payload.positionMs,undefined);
+vm.runInContext(`state.items=[{queueItemId:'one',videoId:'video000001',title:'История Пророков #1: Начало'},
+ {queueItemId:'two',videoId:'video000002',title:'История Пророков #2: Продолжение'},
+ {queueItemId:'ten',videoId:'video000010',title:'История Пророков #10: Ещё'},
+ {queueItemId:'extra',videoId:'video000011',title:'Премьера 2024'},
+ {queueItemId:'final',videoId:'video000012',title:'История Пророков - Конец'}];
+ state.groups=[{id:'series',name:'История',videoIds:['video000010','video000011','video000002','video000001','video000012']}];
+ state.currentIndex=2;state.activeGroupId='series';state.positionMs=12345;
+ startQueueOrder('series');byId('queueSortMode').value='episode';sortDraft()`,ctx);
+assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(queueOrder.ids)',ctx)),['one','two','ten','extra','final']);
+assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(state.groups[0].videoIds)',ctx)),['video000010','video000011','video000002','video000001','video000012'],'Sorting remains a draft until saved');
+for(const [title,expected] of [['Урок 10',10],['Серия №2',2],['История #31: Муса',31],['Выпуск: 7',7],['Как Ной 950 Лет',null],['Премьера 2024',null],['Без названия',null]])assert.equal(vm.runInContext(`episodeNumber(${JSON.stringify(title)})`,ctx),expected);
+await vm.runInContext('applyQueueOrder()',ctx);
+request=JSON.parse(vm.runInContext('JSON.stringify(sent.at(-1))',ctx));assert.deepEqual(request.payload.videoIds,['video000001','video000002','video000010','video000011','video000012']);
+assert.equal(request.payload.groupId,'series');assert.equal(request.payload.queueVersion,7);
+assert.equal(vm.runInContext('state.positionMs',ctx),12345);assert.equal(vm.runInContext('state.currentIndex',ctx),2);
 console.log('PASS: playlist cards, shared video references, readiness gate, safe titles, stable progress DOM, explicit group preparation/start/order and video draft (synthetic)');

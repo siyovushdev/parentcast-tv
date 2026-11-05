@@ -161,12 +161,20 @@ function moveDraft(id,position) {
     const from=queueOrder.ids.indexOf(id);if(from<0)return;
     const to=Math.max(0,Math.min(queueOrder.ids.length-1,position));queueOrder.ids.splice(to,0,queueOrder.ids.splice(from,1)[0]);renderQueue();
 }
+function episodeNumber(title) {
+    const match=String(title || "").match(/(?:[#№]\s*|(?:серия|выпуск|урок|episode|lesson)\s*[:#№.\-]?\s*)(\d{1,6})(?!\d)/iu);
+    return match ? Number(match[1]) : null;
+}
 function sortDraft() {
     if(!state||!queueOrder)return;
     const mode=byId("queueSortMode").value;const items=new Map(state.items.map(e=>[e.queueItemId,e]));
     const ready=new Set([...(state.prepared?.files || []).map(e=>e.videoId),...(state.prepared?.entries || []).filter(e=>e.status==="READY").map(e=>e.videoId)]);
     const title=id=>items.get(id)?.title || items.get(id)?.videoId || "";
     if(mode==="reverse")queueOrder.ids.reverse();
+    else if(mode==="episode")queueOrder.ids.sort((a,b)=> {
+        const first=episodeNumber(items.get(a)?.title),second=episodeNumber(items.get(b)?.title);
+        return first===null ? (second===null ? 0 : 1) : second===null ? -1 : first-second;
+    });
     else queueOrder.ids.sort((a,b)=>mode==="ready"?Number(items.get(b)?.ready===true || (items.get(b)?.ready===undefined && Boolean(items.get(b)?.local)) || ready.has(items.get(b)?.videoId))-Number(items.get(a)?.ready===true || (items.get(a)?.ready===undefined && Boolean(items.get(a)?.local)) || ready.has(items.get(a)?.videoId)):title(a).localeCompare(title(b),"ru",{numeric:true})*(mode==="title-desc"?-1:1));
     renderQueue();
 }
