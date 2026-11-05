@@ -77,6 +77,7 @@ class LocalVideoApiTest {
         val f=Fixture(10);val first=f.start(8);assertEquals(201,f.upload(first).code)
         val second=f.start(3);val error=f.upload(second);assertEquals(422,error.code);assertEquals("NO_SPACE",JSONObject(error.body).getString("error"))
         assertEquals(8L,f.store.usedBytes());assertEquals(1,f.library.localEntries().size)
+        f.library.syncQueue(f.coordinator.currentSnapshot().queueState)
         assertEquals(0,f.library.cleanup());f.library.deleteMedia();while(f.library.snapshot().deleting.isNotEmpty())yield()
         assertEquals(1,f.library.localEntries().size);assertEquals(8L,f.store.usedBytes())
     }

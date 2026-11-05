@@ -44,7 +44,7 @@ class PreparedDurationTest {
             override fun play(){};override fun pause(){};override fun stop(){};override fun currentPositionMs()=0L;override fun release(){}
         }
         val queue=AtomicQueueStore(File(temp.root,"queue.json"))
-        queue.write(QueueState(items=listOf(first,second).map {QueueItem(it,it)}))
+        queue.write(QueueState(items=listOf(first,second).map {QueueItem(it,it)},currentIndex=0))
         val c=PlaybackCoordinator(source,queue,p,this,StandardTestDispatcher(testScheduler))
         val files=PreparedApi(library,c,object:CallDispatcher{override fun <T> call(block:()->T)=block()}).state().getJSONArray("files")
         val inQueue=(0 until files.length()).associate {files.getJSONObject(it).let {it.getString("videoId") to it.getBoolean("inQueue")}}
