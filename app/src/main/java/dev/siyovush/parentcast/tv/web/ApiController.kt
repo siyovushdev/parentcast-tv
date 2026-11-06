@@ -6,6 +6,7 @@ import dev.siyovush.parentcast.tv.queue.IdempotencyStore
 import dev.siyovush.parentcast.tv.queue.StoredResponse
 import org.json.JSONArray
 import org.json.JSONObject
+import dev.siyovush.parentcast.tv.prepared.StorageAvailability
 
 internal data class ApiRequest(
     val method: String,
@@ -41,7 +42,7 @@ internal class ApiController(
     private val programme: ProgrammeApi? = null,
     private val covers: PlaylistCovers? = null,
     private val online: OnlineVideoApi? = null,
-    private val streamingState: ((String?) -> JSONObject)? = null,
+    private val streamingState: ((String?,StorageAvailability?) -> JSONObject)? = null,
 ) {
     private class CommandLock(var users:Int=0)
     private val commandLocks=mutableMapOf<String,CommandLock>()
@@ -357,24 +358,25 @@ internal class ApiController(
 
     internal fun stateBody(): String {
         val snapshot = dispatcher.call { coordinator.currentSnapshot() }
-        return snapshotJson(snapshot).apply {
+        val storage=prepared?.storageAvailability()
+        return snapshotJson(snapshot,storage).apply {
             programme?.let { put("programme",it.state(snapshot)) }
-            prepared?.let { put("prepared", it.state()) }
-            streamingState?.let { put("streaming",it(snapshot.queueState.currentItem?.videoId)) }
+            prepared?.let { put("prepared", it.state(checkNotNull(storage))) }
+            streamingState?.let { put("streaming",it(snapshot.queueState.currentItem?.videoId,storage)) }
             connectUrls?.let { put("connectUrls", JSONArray(it())) }
             displayReady?.let { put("displayReady", it()) }
         }.toString()
     }
 
-    private fun snapshotJson(snapshot: CoordinatorSnapshot): JSONObject {
+    private fun snapshotJson(snapshot: CoordinatorSnapshot,storage:StorageAvailability?=null): JSONObject {
         val items = JSONArray()
         snapshot.queueState.items.forEach { item ->
-            val readiness = prepared?.readiness(item.videoId)
+            val readiness = prepared?.readiness(item.videoId,storage)
             items.put(
                 JSONObject()
                     .put("queueItemId", item.queueItemId)
                     .put("durationSeconds",mediaDuration(item.videoId) ?: JSONObject.NULL).put("videoId", item.videoId).put("local",item.local).put("title",mediaTitle(item.videoId).ifBlank { item.title })
-                    .put("preparationStatus",readiness ?: JSONObject.NULL).put("ready",readiness=="READY").put("canStream",prepared?.canStream(item.videoId)==true),
+                    .put("preparationStatus",readiness ?: JSONObject.NULL).put("ready",readiness=="READY").put("canStream",prepared?.canStream(item.videoId,storage)==true),
             )
         }
         val error = snapshot.error?.let { failure ->

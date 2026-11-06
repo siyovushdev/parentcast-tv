@@ -12,6 +12,11 @@ internal data class MediaVolume(
     val mounted: Boolean = directory != null, val writable: Boolean = directory?.canWrite() == true,
     val totalBytes: Long = directory?.totalSpace ?: 0, val freeBytes: Long = directory?.usableSpace ?: 0,
 )
+/** A read-only request snapshot. Playback admission and every write still check the live volume. */
+internal class StorageAvailability(val volumes:Map<String,MediaVolume>) {
+    val available=volumes.values.filter { it.mounted && it.directory?.isDirectory==true }.map { it.id }.toSet()
+    val writable=volumes.values.filter { it.id in available && it.writable }.map { it.id }.toSet()
+}
 internal class StorageUnavailable(val code: String) : IllegalStateException(code)
 internal data class StorageCommand(val key: String, val fingerprint: String)
 internal data class RetainedOriginal(val id: String, val storageId: String, val tracks: List<LocalTrack>)
@@ -87,6 +92,7 @@ internal class PreparedStorage(
     }
     fun volume(id: String) = if(id == INTERNAL_STORAGE) MediaVolume(INTERNAL_STORAGE,"Память приставки",internalDirectory)
         else volumes().firstOrNull { it.id == id } ?: throw StorageUnavailable("STORAGE_NOT_FOUND")
+    fun availability()=StorageAvailability(if(healthy())volumes().associateBy { it.id } else emptyMap())
     fun limit(id: String): Long = if (id == INTERNAL_STORAGE) internalLimit else limit(volume(id))
     fun limit(observed:MediaVolume):Long = if(observed.id==INTERNAL_STORAGE)internalLimit else observed.totalBytes.let {
         if (it <= FREE_RESERVE) 0 else minOf(EXTERNAL_LIBRARY_LIMIT, it - FREE_RESERVE)
@@ -194,7 +200,23 @@ internal class PreparedStorage(
     companion object {
         fun mediaBytes(root:File):Long = root.listFiles().orEmpty().sumOf { file ->
             if(isMediaFile(file))file.length() else if(file.name=="stream-cache" && file.isDirectory && file.canonicalFile.parentFile==root.canonicalFile)
-                file.walkTopDown().filter { it.isFile && it.canonicalPath.startsWith(file.canonicalPath+File.separator) }.sumOf { it.length() } else 0L
+                cacheBytes(file) else 0L
+        }
+        private fun cacheBytes(directory:File):Long {
+            var bytes=0L
+            // Basic attributes already contain size/type. Never resolve every span's
+            // canonical path, and never follow nested symbolic links outside the cache.
+            java.nio.file.Files.walkFileTree(directory.toPath(),object:java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                override fun visitFile(path:java.nio.file.Path,attributes:java.nio.file.attribute.BasicFileAttributes):java.nio.file.FileVisitResult {
+                    if(attributes.isRegularFile)bytes+=attributes.size()
+                    return java.nio.file.FileVisitResult.CONTINUE
+                }
+                override fun visitFileFailed(path:java.nio.file.Path,error:java.io.IOException):java.nio.file.FileVisitResult {
+                    if(error is java.nio.file.NoSuchFileException)return java.nio.file.FileVisitResult.CONTINUE
+                    throw error
+                }
+            })
+            return bytes
         }
         fun isMediaFile(file: File) = file.isFile && (file.name.endsWith(".mp4") || file.name.endsWith(".part") || file.name.endsWith(".copying"))
         fun physicalName(id:String,name:String,external:Boolean):String {

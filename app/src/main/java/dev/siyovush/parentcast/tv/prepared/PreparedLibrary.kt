@@ -53,6 +53,16 @@ internal class PreparedLibrary(
     }
 
     fun storageStats(): Pair<Long, Long> = store.usedBytes() to store.storage.volume(store.storage.selectedId()).freeBytes
+    internal fun storageAvailability()=store.storage.availability()
+    internal fun storageStats(view:StorageAvailability):Pair<Long,Long> {
+        val id=store.storage.selectedId();val volume=view.volumes[id]
+        val used=volume?.directory?.takeIf { id in view.available }?.let { budget.usedBytes(it) } ?: 0
+        return used to (volume?.freeBytes ?: 0)
+    }
+    internal fun storageLimit(view:StorageAvailability):Long {
+        val id=store.storage.selectedId()
+        return if(id==INTERNAL_STORAGE)internalLimit else view.volumes[id]?.let(store.storage::limit) ?: 0
+    }
     fun snapshot(): PreparationState = synchronized(lock) { state }
     private fun update(transform: (PreparationState) -> PreparationState) {
         synchronized(lock) { state = transform(state); revision.value++ }
@@ -391,11 +401,11 @@ internal class PreparedLibrary(
         };persist();releaseStreaming(id);wakeService()
     }
     internal fun reserveImport(id:String) { require(LOCAL_ID.matches(id));synchronized(lock) { check(!storageBusy) { "BUSY" };store.claim(id) } }
-    internal fun storageAvailable(id:String)=store.storage.available(id)
-    internal fun mediaReadiness(id:String):String = snapshot().let { s -> when {
+    internal fun storageAvailable(id:String,view:StorageAvailability?=null)=if(view==null)store.storage.available(id) else store.storage.placement(id) in view.available
+    internal fun mediaReadiness(id:String,view:StorageAvailability?=null):String = snapshot().let { s -> when {
         synchronized(lock) { storageCleaning } -> "STORAGE_BUSY"
         id in s.deleting -> "DELETING"
-        s.entries[id]?.status==PreparationStatus.READY && !store.storage.available(id) -> "STORAGE_UNAVAILABLE"
+        s.entries[id]?.status==PreparationStatus.READY && !storageAvailable(id,view) -> "STORAGE_UNAVAILABLE"
         else -> s.entries[id]?.status?.name ?: "WAITING"
     } }
     internal fun allowsPlaybackFile(id:String,file:File):Boolean = runCatching {

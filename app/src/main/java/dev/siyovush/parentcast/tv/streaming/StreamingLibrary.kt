@@ -99,9 +99,9 @@ internal class StreamingLibrary(
         }finally{library.releaseStreaming(videoId)}
     } }
     fun isEnabled(id:String)=!corrupt && plans[id]?.storageId==library.mediaStorageId(id) && plans.containsKey(id) && id !in blocked
-    fun canPlayDuringDownload(id:String)=isEnabled(id) && runCatching { library.storage.root(plans.getValue(id).storageId,true);true }.getOrDefault(false) &&
+    fun canPlayDuringDownload(id:String,view:StorageAvailability?=null)=isEnabled(id) && (if(view==null)runCatching { library.storage.root(plans.getValue(id).storageId,true);true }.getOrDefault(false) else plans.getValue(id).storageId in view.writable) &&
         failures[id] !in setOf("REPRESENTATION_CHANGED","NO_SPACE","RANGE_UNSUPPORTED","RANGE_IDENTITY_UNCONFIRMED","STORAGE_ERROR","MEDIA_VALIDATION_FAILED","UNAVAILABLE","UNSUPPORTED","YOUTUBE_AUTH_REQUIRED") &&
-        library.mediaReadiness(id) !in setOf("DELETED","DELETING","STORAGE_BUSY")
+        library.mediaReadiness(id,view) !in setOf("DELETED","DELETING","STORAGE_BUSY")
     fun pendingIds()=plans.keys.filter { it !in blocked && library.mediaReadiness(it)!="READY" }
     fun syncPlayback(id:String?) { val old=priority.currentId;priority.currentId=id;if(old!=id)priority.cancelPlayback(old) }
     fun source(fallback:YouTubeSource)=object:YouTubeSource {
@@ -122,12 +122,13 @@ internal class StreamingLibrary(
         val track=plan.tracks.single { it.key==key }
         return DataSource.Factory { BoundedSource(plan,track,true) }
     }
-    fun states():List<StreamStatus> = plans.keys.mapNotNull(::state)
-    fun state(id:String):StreamStatus? {
+    fun states(view:StorageAvailability?=null):List<StreamStatus> = plans.keys.mapNotNull { state(it,view) }
+    fun state(id:String,view:StorageAvailability?=null):StreamStatus? {
         val plan=plans[id] ?: return null
         val total=plan.tracks.sumOf { it.identity.total }
-        val bytes=if(library.mediaReadiness(id)=="READY")total else synchronized(caches) { caches[plan.storageId] }?.let { c -> plan.tracks.sumOf { c.getCachedBytes(it.key,0,it.identity.total) } } ?: 0
-        return StreamStatus(id,quality=plan.quality,height=plan.height,downloadedBytes=bytes,totalBytes=total,percent=(bytes.toDouble()*100/total).toInt().coerceIn(0,if(library.mediaReadiness(id)=="READY")100 else 99),error=failures[id].orEmpty())
+        val ready=library.mediaReadiness(id,view)=="READY"
+        val bytes=if(ready)total else synchronized(caches) { caches[plan.storageId] }?.let { c -> plan.tracks.sumOf { c.getCachedBytes(it.key,0,it.identity.total) } } ?: 0
+        return StreamStatus(id,quality=plan.quality,height=plan.height,downloadedBytes=bytes,totalBytes=total,percent=(bytes.toDouble()*100/total).toInt().coerceIn(0,if(ready)100 else 99),error=failures[id].orEmpty())
     }
     suspend fun complete(id:String,progress:(Long,Long,String)->Unit):Pair<ResolvedVideo,List<LocalTrack>> = coroutineScope {
         val plan=plans[id] ?: error("STREAM_NOT_CONFIGURED")
@@ -242,11 +243,7 @@ internal class StreamingLibrary(
     }
     private fun sinkFactory(plan:CachedVideo,cache:SimpleCache)=DataSink.Factory {
         val delegate=CacheDataSink.Factory().setCache(cache).setBufferSize(0).setFragmentSize(BLOCK).createDataSink()
-        object:DataSink {
-            override fun open(spec:DataSpec)=delegate.open(spec)
-            override fun write(buffer:ByteArray,offset:Int,length:Int) { library.budget.writeCache(plan.storageId,length) { delegate.write(buffer,offset,length) } }
-            override fun close()=delegate.close()
-        }
+        BufferedCacheSink(delegate,{ length,write -> library.budget.writeCache(plan.storageId,length,write) })
     }
     private fun cache(plan:CachedVideo):SimpleCache {
         val root=library.storage.root(plan.storageId,true)

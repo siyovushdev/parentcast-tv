@@ -1,6 +1,12 @@
 # План реализации
 
-Текущая задача: реальная microSD, `tasks/MicroSD-acceptance.md`, завершена.
+Текущая задача: `tasks/Stream-startup.md` — устранение долгой буферизации
+stream+save на microSD, PARTIAL. Оптимизации v22 установлены;386unit/lint/debug/release PASS.
+Плавный ранний просмотр H728 FAIL: буферизация остаётся; сохранение и данные PASS.
+До локализации оставшейся задержки использовать полную подготовку до READY.
+Результаты: `docs/reports/Stream-startup.md`.
+
+Предыдущее задание: реальная microSD, `tasks/MicroSD-acceptance.md`, завершена.
 21 видео / 42 дорожки перенесены, локальный просмотр и итоговая сверка PASS.
 Результаты: `docs/reports/MicroSD.md`.
 Без очистки внутренних оригиналов, Merge или reboot.

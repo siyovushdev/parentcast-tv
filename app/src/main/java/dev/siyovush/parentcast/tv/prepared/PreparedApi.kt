@@ -9,33 +9,39 @@ import org.json.JSONObject
 
 internal class PreparedApi(private val library: PreparedLibrary, private val coordinator: PlaybackCoordinator, private val dispatcher: CallDispatcher, private val metadataDuration: (String) -> Long? = { null }) {
     val uploadLimit:Long get() = EXTERNAL_LIBRARY_LIMIT
-    fun readiness(id: String): String = library.mediaReadiness(id)
-    fun canStream(id:String)=library.streaming?.canPlayDuringDownload(id)==true
+    fun storageAvailability()=library.storageAvailability()
+    fun readiness(id: String,view:StorageAvailability?=null): String = library.mediaReadiness(id,view)
+    fun canStream(id:String,view:StorageAvailability?=null)=library.streaming?.canPlayDuringDownload(id,view)==true
     fun canPlay(id: String): Boolean = readiness(id) == "READY" || library.streaming?.canPlayDuringDownload(id)==true ||
         (readiness(id)!="STORAGE_BUSY" && readiness(id)!="STORAGE_UNAVAILABLE" && !library.snapshot().enabled && !id.startsWith("local_") && !dev.siyovush.parentcast.tv.media.OnlineMediaIds.isVk(id))
-    fun state(): JSONObject {
+    fun state(view:StorageAvailability=storageAvailability()): JSONObject {
         val s = library.snapshot(); val entries = JSONArray()
         val queueItems=dispatcher.call { coordinator.currentSnapshot().queueState.items }
         val titles=queueItems.associate { it.videoId to it.title }
         val queueIds=queueItems.map { it.videoId }.toSet()
         s.plan.forEachIndexed { index, id ->
             val e = s.entries[id] ?: PreparedEntry(id)
-            entries.put(JSONObject().put("index", index + 1).put("videoId", id).put("title", e.title.ifBlank { titles[id].orEmpty() }).put("status", readiness(id)).put("storageId",library.mediaStorageId(id)).put("available",library.storageAvailable(id))
-                .put("durationSeconds",e.duration.takeIf { it>0 } ?: metadataDuration(e.id) ?: JSONObject.NULL).put("bytes", e.bytes).put("totalBytes", e.total.takeIf { e.totalKnown || e.status == PreparationStatus.READY } ?: JSONObject.NULL)
-                .put("percent", if (id in s.deleting) JSONObject.NULL else preparationPercent(e) ?: JSONObject.NULL).put("phase", e.phase)
+            // Foreground playback can fill the cache while the background worker yields.
+            // Its entry still says INFO until its own next completed range.
+            val live = if(e.status in setOf(PreparationStatus.WAITING,PreparationStatus.DOWNLOADING,PreparationStatus.RETRY_WAIT)) library.streaming?.state(id,view) else null
+            val entryView = if(live?.totalBytes!=null) e.copy(bytes=live.downloadedBytes,total=live.totalBytes,totalKnown=true,
+                phase=if(e.status==PreparationStatus.DOWNLOADING && live.downloadedBytes>0 && e.phase in setOf("INFO","WAITING","")) "CACHE" else e.phase) else e
+            entries.put(JSONObject().put("index", index + 1).put("videoId", id).put("title", e.title.ifBlank { titles[id].orEmpty() }).put("status", readiness(id,view)).put("storageId",library.mediaStorageId(id)).put("available",library.storageAvailable(id,view))
+                .put("durationSeconds",e.duration.takeIf { it>0 } ?: metadataDuration(e.id) ?: JSONObject.NULL).put("bytes", entryView.bytes).put("totalBytes", entryView.total.takeIf { entryView.totalKnown || e.status == PreparationStatus.READY } ?: JSONObject.NULL)
+                .put("percent", if (id in s.deleting) JSONObject.NULL else preparationPercent(entryView) ?: JSONObject.NULL).put("phase", entryView.phase)
                 .put("error", e.error).put("attempts", e.attempts).put("retryAtMs", e.retryAtMs))
         }
         val files = JSONArray()
         s.entries.values.filter { !it.local && (it.status == PreparationStatus.READY || it.id in s.deleting) }.forEach { e ->
             files.put(JSONObject().put("videoId", e.id).put("title", e.title).put("bytes", e.bytes)
-                .put("durationSeconds",e.duration.takeIf { it>0 } ?: metadataDuration(e.id) ?: JSONObject.NULL).put("deleting", e.id in s.deleting).put("inQueue", e.id in queueIds).put("storageId",library.mediaStorageId(e.id)).put("available",library.storageAvailable(e.id)))
+                .put("durationSeconds",e.duration.takeIf { it>0 } ?: metadataDuration(e.id) ?: JSONObject.NULL).put("deleting", e.id in s.deleting).put("inQueue", e.id in queueIds).put("storageId",library.mediaStorageId(e.id)).put("available",library.storageAvailable(e.id,view)))
         }
-        val storage = library.storageStats()
+        val storage = library.storageStats(view);val limit=library.storageLimit(view)
         return JSONObject().put("files", files).put("clearing", s.deleting.isNotEmpty()).put("operationError", s.operationError).put("usedBytes", storage.first).put("freeBytes", storage.second)
-            .put("additionalBytes", minOf((library.limit - storage.first).coerceAtLeast(0), (storage.second - FREE_RESERVE).coerceAtLeast(0)))
+            .put("additionalBytes", minOf((limit - storage.first).coerceAtLeast(0), (storage.second - FREE_RESERVE).coerceAtLeast(0)))
             .put("targetGroupId",s.targetGroupId ?: JSONObject.NULL).put("enabled", s.enabled).put("paused", s.paused).put("storageError", s.storageError)
-            .put("ready", s.plan.count { readiness(it)=="READY" }).put("count", s.plan.size)
-            .put("limitBytes", library.limit).put("reserveBytes", FREE_RESERVE).put("entries", entries)
+            .put("ready", s.plan.count { readiness(it,view)=="READY" }).put("count", s.plan.size)
+            .put("limitBytes", limit).put("reserveBytes", FREE_RESERVE).put("entries", entries)
     }
     fun mutate(json: JSONObject): Pair<Int, String> {
         val action = json.optString("action")

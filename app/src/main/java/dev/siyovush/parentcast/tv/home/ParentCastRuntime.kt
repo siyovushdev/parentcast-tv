@@ -106,8 +106,8 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
             PreparedApi(prepared, coordinator, dispatcher, ::mediaDuration), connectUrls = { network.urls() }, displayReady = { dispatcher.call { player.hasVisibleView() } }, localMedia = localMedia, mediaTitle = prepared::mediaTitle, mediaDuration = ::mediaDuration,
             storage = StorageApi(prepared, coordinator, dispatcher),
             programme = ProgrammeApi(coordinator,dispatcher,covers::exists), covers = covers, online = online,
-            streamingState = { current -> JSONObject().put("entries",JSONArray().apply { streaming.states().forEach { put(streamStatus(it)) } })
-                .put("current",current?.let(streaming::state)?.let(::streamStatus) ?: JSONObject.NULL) },
+            streamingState = { current,storage -> JSONObject().put("entries",JSONArray().apply { streaming.states(storage).forEach { put(streamStatus(it)) } })
+                .put("current",current?.let { streaming.state(it,storage) }?.let(::streamStatus) ?: JSONObject.NULL) },
             thumbnail = { id, owner ->
                 val allowed = dispatcher.call { coordinator.currentSnapshot().queueState.items.any { it.videoId == id } } ||
                     prepared.localEntries().any { it.id == id } || playlists.containsVideo(owner, id) || online.containsVideo(owner,id)

@@ -1,5 +1,7 @@
 # Семейная программа и просмотр с сохранением — 2026-11-06
 
+Исправление буферизации720p: [Stream-startup.md](Stream-startup.md).
+
 Дополнение после подключения реальной карты: [приёмка microSD](MicroSD.md).
 
 Ветка `codex/family-playback-experience` от `694fe1ef6904c01095d67f599ccdaa8dde609187`

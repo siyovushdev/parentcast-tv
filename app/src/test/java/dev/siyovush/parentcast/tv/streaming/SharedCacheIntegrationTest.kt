@@ -5,9 +5,12 @@ import androidx.media3.datasource.DataSpec
 import dev.siyovush.parentcast.tv.media.*
 import dev.siyovush.parentcast.tv.playback.PlaybackErrorKind
 import dev.siyovush.parentcast.tv.playback.PlaybackFailure
+import dev.siyovush.parentcast.tv.playback.PlaybackCoordinator
+import dev.siyovush.parentcast.tv.playback.PlaybackPlayer
 import dev.siyovush.parentcast.tv.prepared.*
 import dev.siyovush.parentcast.tv.queue.*
 import dev.siyovush.parentcast.tv.youtube.*
+import dev.siyovush.parentcast.tv.web.CallDispatcher
 import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.*
@@ -53,8 +56,9 @@ class SharedCacheIntegrationTest {
         var writable=true
         val card=temporary.newFolder()
         val catalogCalls=AtomicInteger()
+        val volumeObservations=AtomicInteger()
         val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
-        val store=PreparedStore(root,{listOf(MediaVolume("sd:fixture","fixture card",card.takeIf{mounted},true,mounted,writable))},internalLimit=limit)
+        val store=PreparedStore(root,{volumeObservations.incrementAndGet();listOf(MediaVolume("sd:fixture","fixture card",card.takeIf{mounted},true,mounted,writable))},internalLimit=limit)
         val fallback=object:YouTubeSource {override suspend fun resolve(videoId:String):ResolvedVideo=error("Unexpected legacy network request")}
         val library=PreparedLibrary(store,fallback,TrackDownloader{_,_,_,_->error("Legacy downloader must not run")},scope,{_,_,_->check(!rejectValidation) { "UNSUPPORTED" }},limit=limit)
         val streaming:StreamingLibrary
@@ -96,6 +100,38 @@ class SharedCacheIntegrationTest {
             return output
         }
         override fun close(){scope.cancel();streaming.close();server.close()}
+    }
+    @Test fun networkFragmentsDoNotTriggerCardEnumerationForEverySmallPacket()=runBlocking {
+        Fixture().use { f->
+            f.store.storage.select("sd:fixture",0)
+            f.start("sd:fixture");f.slow=true;f.volumeObservations.set(0)
+            assertArrayEquals(video.copyOfRange(0,StreamingLibrary.BLOCK.toInt()),f.read(0,StreamingLibrary.BLOCK.toInt()))
+            assertTrue("Card enumeration must be bounded per cache block, observed ${f.volumeObservations.get()}",f.volumeObservations.get()<=8)
+            assertEquals(StreamingLibrary.BLOCK,f.streaming.state(id)!!.downloadedBytes)
+        }
+    }
+    @Test fun downloadApiShowsForegroundCachedBytesBeforeTheBackgroundWorkerReportsProgress()=runBlocking {
+        Fixture().use { f->
+            f.start(); f.read(0,10)
+            val before=f.library.snapshot()
+            assertEquals(0L,before.entries.getValue(id).bytes)
+            val player=object:PlaybackPlayer {
+                override fun setListener(listener:PlaybackPlayer.Listener){}
+                override fun prepare(generation:Long,video:ResolvedVideo,positionMs:Long,playWhenReady:Boolean){}
+                override fun play(){};override fun pause(){};override fun stop(){}
+                override fun currentPositionMs()=0L;override fun release(){}
+            }
+            val coordinator=PlaybackCoordinator(f.fallback,AtomicQueueStore(File(f.root,"queue.json")),player,f.scope)
+            try {
+                val response=PreparedApi(f.library,coordinator,object:CallDispatcher{override fun <T> call(block:()->T)=block()}).state()
+                val entry=response.getJSONArray("entries").getJSONObject(0)
+                assertEquals(StreamingLibrary.BLOCK,entry.getLong("bytes"))
+                assertEquals(video.size.toLong(),entry.getLong("totalBytes"))
+                assertTrue(entry.getInt("percent") in 1..99)
+                assertEquals("WAITING",entry.getString("status"));assertEquals(0,response.getInt("ready"))
+                assertEquals(before,f.library.snapshot())
+            } finally { coordinator.close() }
+        }
     }
     @Test fun seekThenBackgroundSharesRangesAndOnlyPublishesReadyAfterValidation()=runBlocking {
         Fixture(separateAudio=true).use { f->

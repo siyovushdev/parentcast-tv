@@ -1,6 +1,9 @@
 package dev.siyovush.parentcast.tv.prepared
 
 import dev.siyovush.parentcast.tv.youtube.*
+import dev.siyovush.parentcast.tv.playback.*
+import dev.siyovush.parentcast.tv.queue.*
+import dev.siyovush.parentcast.tv.web.CallDispatcher
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.*
 import org.junit.Assert.*
@@ -36,6 +39,36 @@ class PreparedStorageTest {
     },TrackDownloader { _,target,_,progress -> target.writeText("new");progress(3,3);LocalTrack(target.name,3,sha256(target)) },scope,{_,_,_->})
     private fun command(name:String)=StorageCommand(name,"fingerprint-$name")
 
+    @Test fun catalogueResponseUsesOneFreshVolumeSnapshotAndHonoursNextRequestRemoval() = runTest {
+        val f=fixture();val store=f.store();store.storage.select(cardId,0)
+        val ids=(1..21).map { "video%06d".format(it) }
+        ids.forEach { store.claim(it);ready(store,it) }
+        store.write(store.read().copy(plan=ids,enabled=true))
+        val library=library(store,this)
+        val player=object:PlaybackPlayer {
+            override fun setListener(listener:PlaybackPlayer.Listener){}
+            override fun prepare(generation:Long,video:ResolvedVideo,positionMs:Long,playWhenReady:Boolean){}
+            override fun play(){};override fun pause(){};override fun stop(){}
+            override fun currentPositionMs()=0L;override fun release(){}
+        }
+        val queue=AtomicQueueStore(File(f.inside,"queue.json"));queue.write(QueueState(items=ids.map { QueueItem(it,it) },currentIndex=0))
+        val coordinator=PlaybackCoordinator(object:YouTubeSource{override suspend fun resolve(videoId:String):ResolvedVideo=error("No download")},queue,player,this)
+        val api=PreparedApi(library,coordinator,object:CallDispatcher{override fun <T> call(block:()->T)=block()})
+        var observations=0;f.intercept={observations++}
+        try {
+            val response=api.state();assertEquals(1,observations);assertEquals(21,response.getInt("ready"))
+            assertEquals(21,response.getJSONArray("files").length())
+            f.writable=false;observations=0
+            assertEquals(21,api.state().getInt("ready"));assertEquals(1,observations)
+            assertEquals("STORAGE_READ_ONLY",assertThrows(StorageUnavailable::class.java){library.storage.root(cardId,true)}.code)
+            f.mounted=false;observations=0
+            val removed=api.state();assertEquals(1,observations);assertEquals(0,removed.getInt("ready"))
+            assertEquals("STORAGE_UNAVAILABLE",removed.getJSONArray("entries").getJSONObject(0).getString("status"))
+            assertFalse(removed.getJSONArray("files").getJSONObject(0).getBoolean("available"))
+            assertEquals(21,library.snapshot().entries.values.count { it.status==PreparationStatus.READY })
+            assertEquals(21,f.card.listFiles().orEmpty().count { it.name.endsWith(".mp4") })
+        } finally { coordinator.close() }
+    }
     @Test fun legacyIndexAndFilesRemainInternalUntilExplicitSelection() {
         val f=fixture();val store=f.store();val entry=ready(store)
         assertEquals(INTERNAL_STORAGE,store.storage.selectedId());assertTrue(store.verify(entry))
