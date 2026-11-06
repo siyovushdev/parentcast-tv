@@ -7,6 +7,7 @@ let pendingCommands = readJson(COMMANDS_KEY, {});
 let state = null;
 let renderedQueueKey = null;
 let currentThumbnailId = null;
+let preparedFilesViewKey = null;
 function resumeTime(ms) { return formatDuration(Math.max(0,Math.floor((Number(ms)||0)/1000))); }
 function appendVideoThumbnail(container,id,title) { if(typeof addVideoThumbnail === "function")addVideoThumbnail(container,id,title); }
 let refreshing = false;
@@ -158,6 +159,7 @@ function renderState() {
     if(typeof renderTimeline === "function")renderTimeline();
     if (state.connectUrls) byId("homeConnectUrls").textContent = "Адреса пульта: " + state.connectUrls.join(" · ");
     updateSelectionControls();
+    if (typeof renderFamilyState === "function") renderFamilyState();
 }
 
 function renderPrepared() {
@@ -167,45 +169,73 @@ function renderPrepared() {
     const used = Number(s.usedBytes || 0) < 1073741824 ? (Number(s.usedBytes || 0) / 1048576).toFixed(1) + " МиБ" : gib(s.usedBytes) + " ГиБ";
     const noSpace = s.enabled && s.paused && !s.clearing && s.entries.some(e=>e.status === "ERROR" && e.error === "NO_SPACE");
     const quotaFirst = Number(s.limitBytes)-Number(s.usedBytes) <= Number(s.freeBytes)-Number(s.reserveBytes);
-    const spaceWarning = noSpace ? `Загрузка остановлена: для следующего файла ${quotaFirst ? "не хватает места в лимите " + gib(s.limitBytes) + " ГиБ" : "не хватает свободного места с учётом резерва Android"}. Удалите ненужные скачанные файлы и нажмите «Подготовить плейлист» или «Подготовить очередь / продолжить». Повтор без освобождения места не поможет. Уже готовые видео доступны для просмотра.` : "";
+    const spaceWarning = noSpace ? `Загрузка остановлена: для следующего файла ${quotaFirst ? "не хватает места в лимите " + gib(s.limitBytes) + " ГиБ" : "не хватает свободного места с учётом резерва Android"}. Выберите другое хранилище или освободите место в настройках, затем продолжите загрузку. Готовые файлы сохранены.` : "";
     byId("preparationAlert").hidden = !noSpace;
     byId("preparationAlert").textContent = spaceWarning;
-    byId("preparedSummary").textContent = `${s.enabled ? "Локальный режим" : "Потоковый режим"}${s.paused ? "; подготовка остановлена" : ""}. Готово в текущем плане: ${s.ready} из ${s.count}. Всего готовых файлов: ${(s.files || []).length}.${spaceWarning ? " " + spaceWarning : ""}${s.storageError ? " Ошибка хранилища подготовки." : ""}${s.clearing ? " Удаляем файлы…" : ""}${s.operationError ? " Не удалось удалить файлы; повторите после проверки хранилища." : ""}`;
+    const availableFiles=(s.files||[]).filter(e=>e.available!==false).length;
+    const absentFiles=(s.files||[]).filter(e=>e.available===false).length;
+    byId("preparedSummary").textContent = `${s.enabled ? "Локальный режим" : "Потоковый режим"}${s.paused ? "; подготовка остановлена" : ""}. Готово в текущем плане: ${s.ready} из ${s.count}. Готовых доступных файлов: ${availableFiles}.${absentFiles?" На отключённом носителе: "+absentFiles+".":""}${s.storageError ? " Ошибка хранилища подготовки." : ""}${s.clearing ? " Удаляем файлы…" : ""}${s.operationError ? " Не удалось удалить файлы; повторите после проверки хранилища." : ""}`;
     const available = Number(s.additionalBytes || 0) < 1073741824 ? (Number(s.additionalBytes || 0) / 1048576).toFixed(1) + " МиБ" : gib(s.additionalBytes) + " ГиБ";
-    byId("preparedStorage").textContent = `Скачано ${used} из ${gib(s.limitBytes)} ГиБ. Свободно на приставке ${gib(s.freeBytes)} ГиБ; резерв ${gib(s.reserveBytes)} ГиБ. Можно скачать ещё ${available}. Весь большой плейлист может не поместиться: готовые файлы не удаляются автоматически.`;
+    byId("preparedStorage").textContent = `В выбранном хранилище ${used} из ${gib(s.limitBytes)} ГиБ. Свободно на носителе ${gib(s.freeBytes)} ГиБ; резерв ${gib(s.reserveBytes)} ГиБ. Можно скачать ещё ${available}. Весь большой плейлист может не поместиться: готовые файлы не удаляются автоматически.`;
     const rows = byId("preparedEntries");
-    rows.replaceChildren();
-    const names = {WAITING: "В очереди загрузки", DOWNLOADING: "Скачивание", READY: "Готово", ERROR: "Ошибка", DELETED: "Файл удалён", DELETING: "Удаляем файл", RETRY_WAIT: "Ожидаем восстановления сети"};
+    const existingRows = rows.querySelectorAll ? new Map([...rows.querySelectorAll(".download-row")].map(row=>[row.dataset.videoId,row])) : null;
+    const existingGroups = rows.querySelectorAll ? new Map([...rows.querySelectorAll(".download-group")].map(group=>[group.dataset.downloadGroup,group])) : null;
+    const liveIds=new Set(),liveGroups=new Set(),groupPositions=new Map();
+    if(!existingRows)rows.replaceChildren();
+    const ownerFor=entry=>(state.groups||[]).find(g=>g.id===s.targetGroupId&&g.videoIds.includes(entry.videoId)) || (state.groups||[]).find(g=>g.videoIds.includes(entry.videoId));
+    const groupParent=group=>{
+        const id=group?.id||"loose";let box=existingGroups.get(id);
+        if(!box){box=document.createElement("details");box.className="download-group card";box.dataset.downloadGroup=id;box.open=id===(s.targetGroupId||state.activeGroupId)||!group;const summary=document.createElement("summary");const body=document.createElement("div");body.className="download-group-items";box.append(summary,body);existingGroups.set(id,box);rows.append(box);}
+        const plan=s.entries.filter(e=>(ownerFor(e)?.id||"loose")===id);
+        const members=group?group.videoIds.map(id=>state.items.find(e=>e.videoId===id)).filter(Boolean):state.items.filter(e=>!(state.groups||[]).some(g=>g.videoIds.includes(e.videoId)));
+        const ready=members.filter(item=>typeof videoReady==="function"?videoReady(item):item.ready===true).length;
+        box.firstChild.textContent=`${group?.name||"Отдельные видео"} · ${ready} из ${members.length} скачано${id===s.targetGroupId?" · выбран для загрузки":""}`;
+        const body=box.lastChild,empty=body.querySelector(".download-empty");
+        if(!plan.length&&!empty){const note=document.createElement("p");note.className="download-empty muted small";note.textContent="Не включён в текущий план загрузки. Чтобы скачать, откройте плейлист в медиатеке и нажмите «Скачать плейлист».";body.append(note);}else if(plan.length)empty?.remove();
+        liveGroups.add(id);return body;
+    };
+    if(existingGroups)for(const group of state.groups||[])groupParent(group);
+    const parentFor = entry => !existingGroups || !(state.groups||[]).length ? rows : groupParent(ownerFor(entry));
+    const names = {STORAGE_UNAVAILABLE: "Носитель отключён — подключите карту", STORAGE_BUSY: "Хранилище занято", WAITING: "В очереди загрузки", DOWNLOADING: "Скачивание", READY: "Готово", ERROR: "Ошибка", DELETED: "Файл удалён", DELETING: "Удаляем файл", RETRY_WAIT: "Ожидаем восстановления сети"};
     const phases = {INFO: "Получаем данные о ролике", VIDEO: "Загружаем видео", AUDIO: "Загружаем звук", VERIFY: "Проверяем загрузку"};
-    const errors = {STORAGE_ERROR: "Хранилище недоступно. Проверьте место и повторите подготовку",UNAVAILABLE: "Ролик больше недоступен у источника",YOUTUBE_AUTH_REQUIRED: "YouTube требует авторизацию. Включите действующую тестовую сессию на ТВ и повторите подготовку", NO_SPACE: "Недостаточно места в лимите / свободного места", UNSUPPORTED: "Нужен публичный завершённый ролик", NETWORK_RETRY: "Сеть прервалась. Повторим автоматически", DOWNLOAD_FAILED: "Загрузка прервана. Проверьте сеть и нажмите «Повторить ошибки»", FILE_DAMAGED: "Файл повреждён. Повторите загрузку"};
+    const errors = {STORAGE_UNAVAILABLE: "Подключите носитель; файл не удалён",STORAGE_READ_ONLY: "Носитель доступен только для чтения",STORAGE_BUSY: "Проверяем хранилище",STORAGE_ERROR: "Хранилище недоступно. Проверьте место и повторите подготовку",UNAVAILABLE: "Ролик больше недоступен у источника",YOUTUBE_AUTH_REQUIRED: "YouTube требует авторизацию. Включите действующую тестовую сессию на ТВ и повторите подготовку", NO_SPACE: "Недостаточно места в лимите / свободного места", UNSUPPORTED: "Нужен публичный завершённый ролик", NETWORK_RETRY: "Сеть прервалась. Повторим автоматически", DOWNLOAD_FAILED: "Загрузка прервана. Проверьте сеть и нажмите «Повторить ошибки»", FILE_DAMAGED: "Файл повреждён. Повторите загрузку"};
     s.entries.forEach(e => {
-        const row = document.createElement("div");
-        row.className = "download-row";
-        const label = document.createElement("p");
+        const prior=existingRows?.get(e.videoId);
+        const row = prior || document.createElement("div");
+        row.className = "download-row";row.dataset.videoId=e.videoId;liveIds.add(e.videoId);
+        const label = prior?.children[0] || document.createElement("p");
         const known = Number.isFinite(e.percent);
         const retrySeconds = Math.max(0,Math.ceil((e.retryAtMs - (state.serverTimeMs || Date.now())) / 1000));
         const retry = e.status === "RETRY_WAIT" ? `; попытка ${e.attempts}; ${retrySeconds ? "повтор через " + retrySeconds + " с" : "повтор готовится"}` : "";
         const size = `${(e.bytes / 1048576).toFixed(1)}${Number.isFinite(e.totalBytes) ? " / " + (e.totalBytes / 1048576).toFixed(1) : ""} МиБ`;
-        label.textContent = `${e.index}. ${e.title || e.videoId} · ${formatDuration(e.durationSeconds)} — ${names[e.status] || e.status}${e.status === "DOWNLOADING" ? ": " + (phases[e.phase] || "Подготовка") : ""}; ${known ? e.percent + "% · " : ""}${size}${retry}${e.error ? "; " + (errors[e.error] || e.error) : ""}`;
-        const progress = document.createElement("progress");
+        const text = `Приоритет ${e.index} · ${e.title || e.videoId} · ${formatDuration(e.durationSeconds)} — ${names[e.status] || e.status}${e.status === "DOWNLOADING" ? ": " + (phases[e.phase] || "Подготовка") : ""}; ${known ? e.percent + "% · " : ""}${size}${retry}${e.error ? "; " + (errors[e.error] || e.error) : ""}`;
+        if(prior&&label.firstChild?.nodeType===3)label.firstChild.textContent=text;else label.textContent=text;
+        const progress = prior?.children[1] || document.createElement("progress");
         progress.max = 100;
         if (known) progress.value = e.percent;
         else progress.removeAttribute("value");
         progress.hidden = !known && e.status !== "DOWNLOADING";
         progress.setAttribute("aria-label", `Готовность ролика ${e.index}`);
-        appendVideoThumbnail(label,e.videoId,e.title);
-        row.append(label, progress);
-        if (e.status === "READY" || e.status === "DOWNLOADING") row.append(preparedDeleteButton(e.videoId));
-        rows.append(row);
+        if(!prior){appendVideoThumbnail(label,e.videoId,e.title);row.append(label,progress);}
+        let del=prior?.querySelector("button[data-prepared-delete]");
+        if(e.status==="READY"||e.status==="DOWNLOADING"){if(!del){del=preparedDeleteButton(e.videoId);row.append(del);}del.disabled=!!s.clearing||busyActions.has("preparation");}else del?.remove();
+        const parent=parentFor(e),position=groupPositions.get(parent)||0;groupPositions.set(parent,position+1);
+        if(!existingRows)parent.append(row);else if(parent.children[position]!==row)parent.insertBefore(row,parent.children[position]||null);
     });
-    const files = byId("preparedFiles"); files.replaceChildren();
+    if(existingRows)for(const [id,row] of existingRows)if(!liveIds.has(id))row.remove();
+    if(existingGroups)for(const [id,group] of existingGroups)if(!liveGroups.has(id))group.remove();
+    const files = byId("preparedFiles"),fileKey=JSON.stringify(s.files||[]);
+    if(!files.querySelectorAll || preparedFilesViewKey!==fileKey){
+    preparedFilesViewKey=fileKey;files.replaceChildren();
     (s.files || []).forEach(e => {
         const row = document.createElement("p");
         row.textContent = `${e.title || e.videoId} · ${formatDuration(e.durationSeconds)} — ${(e.bytes / 1048576).toFixed(1)} МиБ${e.inQueue ? "; в очереди" : "; вне очереди"}`;
         appendVideoThumbnail(row,e.videoId,e.title);
-        if (!e.deleting) row.append(preparedDeleteButton(e.videoId));
+        if(e.available===false){const note=document.createElement("span");note.textContent=" · Подключите носитель";row.append(note);}
+        else if (!e.deleting) row.append(preparedDeleteButton(e.videoId));
         files.append(row);
     });
+    }
     document.querySelectorAll("[data-prepared]").forEach(button => {
         if (button.dataset.prepared === "RETRY_DELETE") { button.hidden = !s.operationError; button.disabled = busyActions.has("preparation"); }
         else button.disabled = s.clearing || busyActions.has("preparation");
@@ -315,7 +345,13 @@ function apiErrorText(error) {
         COMMAND_STORAGE_LIMIT: "Достигнут лимит сохранённых команд. Повторите позже.",
         IMPORT_BUSY: "Другая передача ещё завершается. Повторите через несколько секунд.",
         USB_UNAVAILABLE_OR_PERMISSION_REQUIRED: "Флешка недоступна. Подключите её и выберите папку в родительском меню на ТВ.",
-        BAD_MEDIA_INPUT: "Проверьте название и размер файла. Он должен помещаться в лимит 10 ГиБ.",
+        BAD_MEDIA_INPUT: "Проверьте название и размер файла. Он должен помещаться в выбранное хранилище.",
+        STORAGE_DESTINATION_CONFLICT: "В выбранном хранилище сохранён исходный файл. Подготовка не начата; автоматическая перезапись запрещена.",
+        STORAGE_CHANGED: "Хранилище изменилось другим родителем. Проверьте выбор и подтвердите действие заново.",
+        STORAGE_UNAVAILABLE: "Носитель недоступен. Подключите выбранную карту памяти.",
+        STORAGE_READ_ONLY: "Носитель доступен только для чтения. Выберите другое хранилище.",
+        STORAGE_BUSY: "Хранилище занято проверкой или переносом. Дождитесь завершения операции.",
+        STOP_PLAYBACK_FIRST: "Сначала нажмите Стоп в пульте, затем повторите освобождение памяти.",
         LOCAL_FILE_NOT_FOUND: "Файл уже удалён. Обновите список своих видео.",
         VIDEO_NOT_READY: "Ролик ещё не готов. Подготовьте плейлист и дождитесь загрузки.",
         OPEN_PLAYER_ON_TV: "Для просмотра сначала откройте ParentCast на телевизоре. Очередь и подготовка доступны из пульта.",
@@ -326,23 +362,37 @@ function apiErrorText(error) {
     return messages[code] || (error.status === 429 ? "Приставка временно занята. Повторите позже." : error.message);
 }
 
-async function perform(key, path, payload) {
+async function perform(key, path, payload, afterApply) {
     const retryButton = byId("retryCommandButton");
     retryButton.hidden = true;
     let pending = pendingCommands[key];
     if (!pending) {
         pending = {path, payload};
+        if (afterApply) pending.afterApply = afterApply;
         pendingCommands[key] = pending;
         writeJson(COMMANDS_KEY, pendingCommands);
     }
     try {
-        const result = await api(pending.path, "POST", pending.payload);
+        const result = pending.appliedResult || await api(pending.path, "POST", pending.payload);
+        if (pending.afterApply && typeof finishImportDownload === "function") {
+            // Persist the accepted group before starting the separately confirmed preparation.
+            // Lost responses retry the same selection/ENABLE keys, never a second import.
+            pending.appliedResult = {addition:result.addition,queueVersion:result.queueVersion};
+            writeJson(COMMANDS_KEY,pendingCommands);
+            try { await finishImportDownload(pending); }
+            catch (error) { error.playlistSaved = true; throw error; }
+        }
         delete pendingCommands[key];
         writeJson(COMMANDS_KEY, pendingCommands);
         byId("commandMessage").textContent = "Команда принята; состояние уточняется у плеера";
         if (device) commandCompleted(pending.path, pending.payload, result);
+        if (pending.path==="/api/playlists/preview" || pending.path==="/api/playlists/cancel")byId("commandMessage").textContent="";
         await refreshState();
         showPendingCommand();
+        if (pending.afterApply) {
+            byId("commandMessage").textContent = "Плейлист сохранён. Загрузка поставлена в очередь; просмотр не запущен.";
+            if(typeof showFamilyPage === "function")showFamilyPage("downloads");
+        }
         return result;
     } catch (error) {
         if (error.status === 409) {
@@ -366,6 +416,7 @@ async function perform(key, path, payload) {
             setConnection(false);
         }
         showPendingCommand();
+        if(error.playlistSaved)byId("commandMessage").textContent="Плейлист сохранён, но начало загрузки не подтверждено. "+apiErrorText(error)+(error.status>=400&&error.status<500?" Проверьте хранилище и нажмите «Подготовить плейлист».":" Повторите сохранённую команду; список повторно не добавится.");
         throw error;
     }
 }
@@ -485,6 +536,7 @@ function clearPreview() {
     previewPoll = null;
     preview = null;
     selectedIndices = new Set();
+    if(typeof resetFamilyImport === "function")resetFamilyImport();
     byId("playlistPreview").hidden = true;
     byId("playlistCancelButton").hidden = true;
     byId("playlistEntries").replaceChildren();
@@ -581,10 +633,10 @@ function formatDuration(seconds) {
 
 function renderPreview() {
     if (!preview) return;
-    const entries = Array.isArray(preview.entries) ? preview.entries : [];
+    const entries = typeof orderedPreviewEntries === "function" ? orderedPreviewEntries() : Array.isArray(preview.entries) ? preview.entries : [];
     const terminalMessages = {
         LOADING: "Получение списка на приставке… Управление плеером доступно.",
-        COMPLETE: "COMPLETE: список получен. Выберите ролики и явно подтвердите добавление или сохранение.",
+        COMPLETE: "Список получен. Выберите видео и порядок.",
         PARTIAL: "PARTIAL: получена только часть списка. Полный импорт не подтверждён.",
         LIMIT_EXCEEDED: "Превышен лимит 500 элементов. Импорт и сохранение этого предпросмотра запрещены; выберите меньший плейлист.",
         ERROR: "Ошибка получения плейлиста. Очередь не изменена.",
@@ -600,33 +652,37 @@ function renderPreview() {
     }
     const reported = preview.reportedCount == null ? "неизвестно" : String(preview.reportedCount);
     const selectableCount = entries.filter(entry => entry.selectable).length;
-    byId("playlistCount").textContent = `Получено: ${entries.length}; заявлено ${preview.provider === "VK" ? "VK" : "YouTube"}: ${reported}; допускаются к выбору: ${selectableCount}. Исходный порядок сохранён.`;
+    const unknownCount=entries.filter(entry=>entry.availability==="UNKNOWN").length;
+    byId("playlistCount").textContent = `${preview.provider === "VK" ? "VK" : "YouTube"}: получено ${entries.length} / ${reported} · можно выбрать ${selectableCount} · недоступно ${entries.length-selectableCount}${unknownCount?" · доступность не проверена у "+unknownCount:""}`;
     byId("playlistEntries").replaceChildren();
     byId("playlistSelection").hidden = !previewCanApply();
     byId("playlistConfirm").hidden = !previewCanApply();
     byId("playlistPartialNotice").hidden = preview.status !== "PARTIAL";
     const validIndices = new Set(entries.filter(entry => entry.selectable).map(entry => entry.index));
     selectedIndices = new Set([...selectedIndices].filter(index => validIndices.has(index)));
-    entries.forEach(entry => {
-        const row = document.createElement("label");
+    entries.forEach((entry, position) => {
+        const row = document.createElement("div");
         row.className = "playlist-entry";
         const input = document.createElement("input");
         input.type = "checkbox";
         input.dataset.index = String(entry.index);
         input.checked = selectedIndices.has(entry.index);
         input.disabled = !entry.selectable || !previewCanApply();
+        input.setAttribute?.("aria-label", "Выбрать: " + (entry.title || "Видео"));
         const content = document.createElement("span");
         const title = document.createElement("strong");
-        title.textContent = `${entry.index}. ${preview.provider === "VK" ? "VK · " : ""}${entry.title || "Без названия"}`;
+        title.textContent = `${position + 1}. ${preview.provider === "VK" ? "VK · " : ""}${entry.title || "Без названия"}`;
         const meta = document.createElement("span");
         meta.className = "muted small entry-meta";
         meta.textContent = [entry.videoId, entry.channel, formatDuration(entry.durationSeconds), availabilityNames[entry.availability] || "Доступность не проверена"].filter(Boolean).join(" · ");
         content.append(title, meta);
         if(entry.selectable)appendVideoThumbnail(content,entry.videoId,entry.title);
         row.append(input, content);
+        if(typeof appendPreviewOrderControls === "function")appendPreviewOrderControls(row,entry,position);
         byId("playlistEntries").append(row);
     });
     updateSelectionControls();
+    if(typeof syncImportFlow === "function")syncImportFlow();
 }
 
 function updateSelectionControls() {
@@ -635,7 +691,8 @@ function updateSelectionControls() {
     const newIds = new Set((preview && preview.entries || []).filter(entry => selectedIndices.has(entry.index) && entry.selectable && !queued.has(entry.videoId)).map(entry => entry.videoId));
     byId("playlistSelectedCount").textContent = `Выбрано: ${selected}; новых: ${newIds.size}. Ролики из очереди повторно не добавляются.`;
     const groupMode = Array.isArray(state?.groups);
-    const ids = [...new Set((preview?.entries || []).filter(e=>selectedIndices.has(e.index) && e.selectable).map(e=>e.videoId))];
+    const ordered = typeof orderedPreviewEntries === "function" ? orderedPreviewEntries() : preview?.entries || [];
+    const ids = [...new Set(ordered.filter(e=>selectedIndices.has(e.index) && e.selectable).map(e=>e.videoId))];
     const sameGroup = groupMode && state.groups.some(g=>JSON.stringify(g.videoIds)===JSON.stringify(ids) && g.source===(preview?.provider === "VK" ? "VK_PLAYLIST" : "YOUTUBE_PLAYLIST") && g.name===byId("playlistGroupName").value.trim());
     byId("playlistApplyButton").textContent = groupMode ? sameGroup ? "Плейлист уже в программе" : "Добавить плейлист в программу" : selected && !newIds.size ? "Уже в очереди" : "Добавить выбранные";
     const previewId = preview ? preview.previewId : "";
@@ -655,6 +712,7 @@ function updateSelectionControls() {
         if (button.dataset.collectionAction === "apply") button.textContent = alreadyQueued ? "Подборка уже в программе" : "Добавить как плейлист";
         button.disabled = Boolean(alreadyQueued) || busyActions.has(`collection-${id}`) || hasPending(`/api/collections/${button.dataset.collectionAction}`, "collectionId", id);
     });
+    if(typeof syncImportFlow === "function")syncImportFlow();
 }
 
 async function withBusy(action, operation) {
@@ -703,19 +761,24 @@ async function cancelPreview() {
 
 function selectedPayload() {
     if (!previewCanApply() || !selectedIndices.size) throw new Error("NO_SELECTION");
-    return {previewId: preview.previewId, indices: [...selectedIndices].sort((a, b) => a - b)};
+    const payload={previewId: preview.previewId, indices: [...selectedIndices].sort((a, b) => a - b)};
+    if(typeof orderedPreviewEntries === "function")payload.orderedIndices=orderedPreviewEntries().filter(e=>selectedIndices.has(e.index)).map(e=>e.index);
+    return payload;
 }
 
-async function applyPreview() {
+async function applyPreview(download = false) {
     if (!state) return;
     const payload = {...selectedPayload(), queueVersion: state.queueVersion, idempotencyKey: commandKey()};
     if(Array.isArray(state.groups))payload.groupName=byId("playlistGroupName").value.trim();
     return withBusy("apply", async () => {
         try {
-            await perform(`apply-preview-${commandKey()}`, "/api/playlists/apply", payload);
+            const after=download && typeof importDownloadPlan === "function" ? importDownloadPlan() : null;
+            await perform(`apply-preview-${commandKey()}`, "/api/playlists/apply", payload, after);
+            if(!download && typeof showFamilyPage === "function")showFamilyPage("library");
         } catch (error) {
             byId("playlistMessage").textContent = isQueueVersionConflict(error)
                 ? "Очередь изменилась. Проверьте актуальную очередь и нажмите «Добавить выбранные» снова для нового подтверждения."
+                : error.playlistSaved ? `Плейлист сохранён, но загрузка не началась: ${apiErrorText(error)}`
                 : `Добавление не подтверждено: ${apiErrorText(error)}${error.status >= 400 && error.status < 500 ? "" : ". При потере ответа повторите сохранённую команду."}`;
             throw error;
         }
@@ -819,7 +882,7 @@ byId("addButton").addEventListener("click", () => run(addLinks));
 byId("playNowButton").addEventListener("click", () => run(playNow));
 byId("clearAllButton").addEventListener("click", () => run(clearAllQueue));
 byId("clearPendingButton").addEventListener("click", () => run(clearPending));
-byId("playlistPreviewButton").addEventListener("click", () => run(startPreview));
+byId("playlistPreviewButton").addEventListener("click", () => run(typeof beginFamilyImport === "function" ? beginFamilyImport : startPreview));
 byId("playlistCancelButton").addEventListener("click", () => run(cancelPreview));
 byId("playlistApplyButton").addEventListener("click", () => run(applyPreview));
 byId("collectionSaveButton").addEventListener("click", () => run(saveCollection));

@@ -92,7 +92,7 @@ internal class HttpTrackDownloader(
                                     val count = input.read(buffer); if (count < 0) break
                                     check(bytes + count <= total && bytes + count <= allowance) { "DOWNLOAD_FAILED" }
                                     check(target.parentFile!!.usableSpace - count >= FREE_RESERVE) { "NO_SPACE" }
-                                    if (budget != null) budget.write(output, buffer, count) else try {output.write(buffer, 0, count)} catch(error:java.io.IOException){throw MediaStorageFailure(error)}
+                                    if (budget != null) budget.write(output, buffer, count,target) else try {output.write(buffer, 0, count)} catch(error:java.io.IOException){throw MediaStorageFailure(error)}
                                     bytes += count
                                     val now = System.nanoTime(); if (now - lastProgress > 500_000_000L) { progress(bytes,total); lastProgress=now }
                                 }

@@ -31,8 +31,8 @@ async function refreshLocalMedia() {
             const row=document.createElement("div");row.className="media-choice";
             const box=document.createElement("input");box.type="checkbox";box.checked=selectedLocal.has(file.videoId);box.dataset.localId=file.videoId;
             box.setAttribute("aria-label","Выбрать: "+file.title);
-            const label=document.createElement("span");label.textContent=`${file.title} · ${formatDuration(file.durationSeconds)} · ${mediaSize(file.bytes)} · готово офлайн`;
-            const del=document.createElement("button");del.className="secondary";del.textContent="Удалить файл";del.dataset.localDelete=file.videoId;
+            const label=document.createElement("span");label.textContent=`${file.title} · ${formatDuration(file.durationSeconds)} · ${mediaSize(file.bytes)} · ${file.available === false ? "носитель недоступен — подключите карту" : "готово офлайн"}`;
+            const del=document.createElement("button");del.className="secondary";del.textContent="Удалить файл";del.dataset.localDelete=file.videoId;del.disabled=file.available===false;
             appendVideoThumbnail(label,file.videoId,file.title);
             row.append(box,label,del);container.append(row);
         }
@@ -98,7 +98,7 @@ function transferFile(file,job,index,count) {
 async function uploadLocalFiles() {
     const files=Array.from(byId("localFilesInput").files || []);
     if(!files.length || localTransfer)return;
-    if(files.length>20 || files.some(f=>f.size<=0 || f.size>10737418240)) { byId("localUploadMessage").textContent="Выберите от 1 до 20 видео, каждое до 10 ГиБ.";return; }
+    if(files.length>20 || files.some(f=>f.size<=0 || f.size>53687091200)) { byId("localUploadMessage").textContent="Выберите от 1 до 20 видео, каждое до 50 ГиБ и в пределах свободного места.";return; }
     uploadCancelled=false;byId("uploadLocalButton").disabled=true;byId("cancelUploadButton").hidden=false;byId("localUploadProgress").hidden=false;
     try {
         for(let i=0;i<files.length;i++) {
@@ -130,7 +130,7 @@ async function refreshUsb(reset=false) {
             if(item.folder) {
                 const button=document.createElement("button");button.className="secondary";button.textContent="📁 "+item.name;button.dataset.usbFolder=item.key;row.append(button);
             } else {
-                const box=document.createElement("input");box.type="checkbox";box.dataset.usbKey=item.key;box.disabled=item.size<=0 || item.size>10737418240;
+                const box=document.createElement("input");box.type="checkbox";box.dataset.usbKey=item.key;box.disabled=item.size<=0 || item.size>53687091200;
                 const label=document.createElement("span");label.textContent=item.name+" · "+mediaSize(item.size);row.append(box,label);
             }
             container.append(row);

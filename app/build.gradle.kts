@@ -11,8 +11,8 @@ android {
         applicationId = "dev.siyovush.parentcast.tv"
         minSdk = 33
         targetSdk = 35
-        versionCode = 15
-        versionName = "0.1.0-playlist-storage-order-beta"
+        versionCode = 16
+        versionName = "0.1.0-family-library-beta"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

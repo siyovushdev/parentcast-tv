@@ -20,8 +20,8 @@ internal object PreparedRuntime {
         instance ?: run {
             val app = context.applicationContext
             val session = sharedSession ?: session(app)
-            val store = PreparedStore(File(app.noBackupFilesDir, "prepared-programme"))
-            val budget = MediaBudget(store.directory)
+            val store = PreparedStore(File(app.noBackupFilesDir, "prepared-programme"),AndroidMediaVolumes(app)::list)
+            val budget = MediaBudget(store.directory,storage=store.storage)
             PreparedLibrary(store,
                 dev.siyovush.parentcast.tv.media.OnlineVideoSource(YtDlpYouTubeSource(app, session, publicOnly = true), dev.siyovush.parentcast.tv.media.VkVideoSource(app)), HttpTrackDownloader(session, budget, transferEvent={event,offset -> android.util.Log.i("ParentCastTransfer","$event offset=$offset")}),
                 CoroutineScope(SupervisorJob() + Dispatchers.IO), ::validate,

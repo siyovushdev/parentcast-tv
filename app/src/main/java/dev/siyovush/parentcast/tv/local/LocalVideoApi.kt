@@ -34,7 +34,11 @@ internal class LocalVideoApi(
                 require(old.id.matches(Regex("[a-zA-Z0-9-]{36}")) && old.mediaId.matches(LOCAL_ID))
                 val ready=library.localEntries().any { it.id==old.mediaId }
                 jobs[old.id]=if(ready) old.copy(status="READY",bytes=old.size,error="") else if(old.status in setOf("COPYING","VERIFYING","QUEUED")) old.copy(status="ERROR",error="IMPORT_INTERRUPTED") else old
-                if(!ready) library.discardIncompleteImport(old.mediaId)
+                if(!ready) try { library.discardIncompleteImport(old.mediaId) }
+                catch(error:StorageUnavailable) {
+                    if(error.code !in setOf("STORAGE_UNAVAILABLE","STORAGE_READ_ONLY","STORAGE_NOT_FOUND")) throw error
+                    if(old.status!="CANCELLED") jobs[old.id]=old.copy(status="ERROR",error=error.code)
+                }
             }
         } } catch (_: Exception) { storageError=true;jobs.clear() }
     }
@@ -58,12 +62,18 @@ internal class LocalVideoApi(
         check(jobs.size<1000) { "IMPORT_LIMIT" }
         val id=UUID.randomUUID().toString(); var mediaId: String
         do { mediaId="local_"+UUID.randomUUID().toString().replace("-","") } while(library.snapshot().entries.containsKey(mediaId) || jobs.values.any { it.mediaId==mediaId })
-        val result=ImportJob(id,owner,mediaId,name,size,status); jobs[id]=result; if(saveNow) {try {save()} catch(error:Exception){jobs.remove(id);throw error}}; return result
+        val result=ImportJob(id,owner,mediaId,name,size,status); jobs[id]=result
+        if(saveNow) {
+            try { save(); library.reserveImport(mediaId) }
+            catch(error:Exception) { jobs.remove(id); runCatching { save() }; throw error }
+        }
+        return result
     }
     fun read(path: String, owner: String): ApiResponse? = when {
         storageError && path=="/api/local" -> ApiResponse(503,"{\"error\":\"IMPORT_STORAGE_ERROR\"}")
         path=="/api/local" -> {
-            val files=JSONArray(); library.localEntries().forEach { e -> files.put(JSONObject().put("videoId",e.id).put("title",e.title).put("bytes",e.bytes).put("durationSeconds",e.duration)) }
+            val files=JSONArray(); library.localEntries().forEach { e -> files.put(JSONObject().put("videoId",e.id).put("title",e.title).put("bytes",e.bytes).put("durationSeconds",e.duration)
+                .put("storageId",library.mediaStorageId(e.id)).put("available",library.storageAvailable(e.id)).put("preparationStatus",library.mediaReadiness(e.id))) }
             val tasks=JSONArray(); synchronized(this) { jobs.values.filter { it.owner==owner }.takeLast(50).forEach { tasks.put(json(it)) } }
             ApiResponse(200,JSONObject().put("files",files).put("jobs",tasks).put("usbConnected",usb?.connected()==true).toString())
         }
@@ -120,7 +130,8 @@ internal class LocalVideoApi(
                 val tasks=synchronized(this) {
                     check(jobs.size+selections.size<=1000) { "IMPORT_LIMIT" }
                     val batch=selections.map {create(owner,it.item.name,it.item.size,"QUEUED",false)}
-                    try {save()} catch(error:Exception){batch.forEach {jobs.remove(it.id)};throw error};batch
+                    try {save();batch.forEach { library.reserveImport(it.mediaId) }}
+                    catch(error:Exception){batch.forEach {jobs.remove(it.id)};runCatching { save() };throw error};batch
                 }
                 scope.launch(Dispatchers.IO) {
                     tasks.zip(selections).forEach { (task,selection) ->
@@ -137,8 +148,8 @@ internal class LocalVideoApi(
             else -> 404 to "{\"error\":\"NOT_FOUND\"}"
         }
     } catch (error: Exception) {
-        val code=error.message?.takeIf { it in setOf("BAD_MEDIA_INPUT","LOCAL_FILE_NOT_FOUND","FILE_IN_USE","BUSY","IMPORT_LIMIT","USB_UNAVAILABLE","USB_LIST_EXPIRED","USB_UNKNOWN_SIZE","IMPORT_STORAGE_ERROR") } ?: "BAD_REQUEST"
-        (if(code=="IMPORT_STORAGE_ERROR" || error is IOException) 503 else if(code in setOf("BUSY","FILE_IN_USE","IMPORT_LIMIT")) 409 else 400) to JSONObject().put("error",code).toString()
+        val code=error.message?.takeIf { it in setOf("BAD_MEDIA_INPUT","LOCAL_FILE_NOT_FOUND","FILE_IN_USE","BUSY","IMPORT_LIMIT","USB_UNAVAILABLE","USB_LIST_EXPIRED","USB_UNKNOWN_SIZE","IMPORT_STORAGE_ERROR","STORAGE_UNAVAILABLE","STORAGE_READ_ONLY","STORAGE_CATALOGUE_ERROR") } ?: "BAD_REQUEST"
+        (if(code in setOf("IMPORT_STORAGE_ERROR","STORAGE_CATALOGUE_ERROR") || error is IOException) 503 else if(code in setOf("BUSY","FILE_IN_USE","IMPORT_LIMIT","STORAGE_UNAVAILABLE","STORAGE_READ_ONLY")) 409 else 400) to JSONObject().put("error",code).toString()
     }
     fun upload(id: String, owner: String, length: Long, input: InputStream): ApiResponse {
         val task=try { job(id,owner) } catch (_: Exception) { return ApiResponse(404,"{\"error\":\"IMPORT_NOT_FOUND\"}") }
@@ -171,7 +182,7 @@ internal class LocalVideoApi(
             }
             change(task.id) { it.copy(status="READY",bytes=it.size,error="") }
         } catch (error: Throwable) {
-            val code=error.message?.takeIf { it in setOf("NO_SPACE","UNSUPPORTED_MEDIA","UNSUPPORTED_CODEC","UPLOAD_INCOMPLETE","UPLOAD_SIZE_MISMATCH","BUSY","STORAGE_ERROR") } ?: "IMPORT_FAILED"
+            val code=error.message?.takeIf { it in setOf("NO_SPACE","UNSUPPORTED_MEDIA","UNSUPPORTED_CODEC","UPLOAD_INCOMPLETE","UPLOAD_SIZE_MISMATCH","BUSY","STORAGE_ERROR","STORAGE_UNAVAILABLE","STORAGE_READ_ONLY") } ?: "IMPORT_FAILED"
             change(task.id) { if(it.status=="CANCELLED") it else it.copy(status="ERROR",error=code) }
             throw error
         } finally { running.remove(task.id);streams.remove(task.id) }

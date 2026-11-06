@@ -7,15 +7,20 @@ const groupViews = savedGroupViews && typeof savedGroupViews === "object" && !Ar
 const groupSourceNames = {YOUTUBE_PLAYLIST: "YouTube · плейлист", VK_PLAYLIST: "VK · плейлист", COLLECTION: "Сохранённая подборка"};
 
 function videoReady(item) {
+    if(item.preparationStatus === "STORAGE_UNAVAILABLE" || item.preparationStatus === "STORAGE_BUSY")return false;
+    if(item.ready === false)return false;
     return item.ready === true || (state.prepared?.files || []).some(e => e.videoId === item.videoId) ||
         (state.prepared?.entries || []).some(e => e.videoId === item.videoId && e.status === "READY");
 }
 function videoCanWatch(item) {
+    if(item.preparationStatus === "STORAGE_UNAVAILABLE" || item.preparationStatus === "STORAGE_BUSY")return false;
     return videoReady(item) || (!state.prepared?.enabled && !item.local && !item.videoId.startsWith("vk:"));
 }
 function unavailableWatchLabel(item) {
     const entry = (state.prepared?.entries || []).find(e => e.videoId === item.videoId);
     const status = entry?.status || item.preparationStatus;
+    if(status === "STORAGE_UNAVAILABLE")return "Подключите карту";
+    if(status === "STORAGE_BUSY")return "Проверяем хранилище";
     if(status === "DOWNLOADING") return entry?.percent == null ? "Загружается…" : `Загружается · ${entry.percent}%`;
     if(status === "RETRY_WAIT") return "Ждём сеть";
     if(status === "ERROR") return "Ошибка подготовки";
@@ -39,56 +44,65 @@ function groupButton(text, action, id) {
     const b = document.createElement("button");b.className = "secondary";b.textContent = text;
     b.dataset.groupAction = action;b.dataset.groupId = id;b.disabled = groupRequestBusy;return b;
 }
+let libraryGroupId = null;
+function groupElement(tag,className,text) {const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node;}
+function libraryMembers(group) {return group.videoIds.map(id=>state.items.find(e=>e.videoId===id)).filter(Boolean);}
+function programmeCatalogue() {
+    const groups=state.groups||[],assigned=new Set(groups.flatMap(g=>g.videoIds));
+    const ungrouped=state.items.filter(e=>!assigned.has(e.videoId));
+    return [...groups,...(ungrouped.length?[{id:"ungrouped",name:"Отдельные видео",source:"LOOSE",videoIds:ungrouped.map(e=>e.videoId)}]:[])];
+}
+function groupCover(group,members) {const box=groupElement("div","library-cover");if(members[0])appendVideoThumbnail(box,members[0].videoId,group.name);else box.textContent="Плейлист";return box;}
 function renderProgrammeGroups() {
-    const groups = state.groups || [];
-    byId("editQueueOrder").hidden = groups.length > 0;
-    byId("clearPendingButton").hidden = groups.length > 0;
-    const key = JSON.stringify([groups,state.activeGroupId,state.currentIndex,state.prepared?.enabled,groupRequestBusy,
-        state.items.map(e => [e.queueItemId,e.title,e.ready,e.preparationStatus,e.durationSeconds]),
-        (state.prepared?.entries || []).map(e=>[e.videoId,e.status])]);
-    if(programmeViewKey === key) {
+    const groups=programmeCatalogue();
+    const query=(byId("librarySearch")?.value||"").trim().toLocaleLowerCase("ru");
+    const readyOnly=byId("libraryFilter")?.value==="ready";
+    const selected=groups.find(g=>g.id===libraryGroupId);
+    if(libraryGroupId&&!selected)libraryGroupId=null;
+    byId("editQueueOrder").hidden=!!selected&&selected.id!=="ungrouped" || (!selected&&(state.groups||[]).length>0);
+    byId("clearPendingButton").hidden=(state.groups||[]).length>0;
+    if(byId("libraryBack"))byId("libraryBack").hidden=!selected;
+    const key=JSON.stringify([libraryGroupId,query,readyOnly,state.groups,state.activeGroupId,state.currentIndex,state.prepared?.enabled,groupRequestBusy,
+        state.items.map(e=>[e.queueItemId,e.title,e.ready,e.preparationStatus,e.durationSeconds]),(state.prepared?.entries||[]).map(e=>[e.videoId,e.status])]);
+    if(programmeViewKey===key) {
         byId("queue").querySelectorAll('button[data-group-action="watch-video"]').forEach(button=>{
             const item=state.items.find(e=>e.queueItemId===button.dataset.itemId);
-            if(item)button.textContent=!videoCanWatch(item) ? unavailableWatchLabel(item) :
-                (state.items[state.currentIndex]?.queueItemId===item.queueItemId && ((state.activeGroupId || "") === (button.dataset.groupId || "")) && state.positionMs>0 && !state.finished ? `Продолжить с ${resumeTime(state.positionMs)}` : "Смотреть");
+            if(item)button.textContent=!videoCanWatch(item)?unavailableWatchLabel(item):
+                (state.items[state.currentIndex]?.queueItemId===item.queueItemId&&((state.activeGroupId||"")===(button.dataset.groupId||""))&&state.positionMs>0&&!state.finished?`Продолжить с ${resumeTime(state.positionMs)}`:"Смотреть");
         });return;
     }
-    programmeViewKey = key;
-    const container = byId("queue");container.replaceChildren();
-    const byVideo = new Map();state.items.forEach(e=>{if(!byVideo.has(e.videoId))byVideo.set(e.videoId,e);});
-    const assigned = new Set(groups.flatMap(g=>g.videoIds));
-    groups.forEach((group,index) => {
-        const members = group.videoIds.map(id => byVideo.get(id)).filter(Boolean);
-        const card = document.createElement("details");card.className = "programme-group";card.dataset.programmeGroup = group.id;
-        card.open = typeof groupViews[group.id] === "boolean" ? groupViews[group.id] : groups.length === 1 || state.activeGroupId === group.id;
-        card.addEventListener("toggle", () => {groupViews[group.id] = card.open;try {localStorage.setItem(groupViewsKey,JSON.stringify(groupViews));} catch(_) {}});
-        const summary = document.createElement("summary");
-        const name = document.createElement("strong");name.textContent = `${index+1}. ${group.name}${state.activeGroupId === group.id ? " — выбран" : ""}`;
-        const info = document.createElement("span");info.className = "muted small";
-        const providers=[...new Set(members.map(e=>e.local?"Свои файлы":e.videoId.startsWith("vk:")?"VK":"YouTube"))].join(" / ");
-        info.textContent = `${groupSourceNames[group.source] || "Плейлист"}${group.source==="COLLECTION"?" · "+providers:""} · ${members.length} видео · готово ${members.filter(videoReady).length}/${members.length}`;
-        summary.append(name,info);card.append(summary);
-        const controls = document.createElement("div");controls.className = "controls";
-        const play = groupButton("Смотреть плейлист сначала","play",group.id);play.disabled ||= !members[0] || !videoCanWatch(members[0]);if(members[0] && !videoCanWatch(members[0]))play.textContent="Сначала подготовьте первый ролик";
-        const prepare = groupButton("Подготовить плейлист","prepare",group.id);
-        const edit = groupButton("Изменить порядок видео","edit",group.id);
-        const up = groupButton("↑ Плейлист","up",group.id);up.disabled ||= index === 0;
-        const down = groupButton("↓ Плейлист","down",group.id);down.disabled ||= index === groups.length-1;
-        const remove=groupButton("Удалить плейлист из программы","remove",group.id);
-        controls.append(play,prepare,edit,up,down,remove);card.append(controls);
-        const note = document.createElement("p");note.className = "muted small";
-        note.textContent = "Видео идут в указанном порядке. В конце этого плейлиста просмотр остановится. Общие с другими плейлистами ролики используют один файл. Для просмотра без ожиданий дождитесь готовности всего плейлиста.";
-        card.append(note);members.forEach((item,n) => card.append(playlistRow(item,n,group.id)));container.append(card);
-    });
-    for(const [provider,label] of [["YT","YouTube"],["VK","VK"],["LOCAL","Свои файлы"]]) {
-        const items = state.items.filter(e => !assigned.has(e.videoId) && (e.local ? "LOCAL" : e.videoId.startsWith("vk:") ? "VK" : "YT") === provider);
-        if(!items.length)continue;
-        const card = document.createElement("details");card.className = "programme-group";card.open = !groups.length;
-        const summary = document.createElement("summary");summary.textContent = `Видео без плейлиста · ${label} · ${items.length}`;card.append(summary);
-        const note = document.createElement("p");note.className = "muted small";note.textContent = "Ранее добавленные видео сохраняются здесь. Чтобы восстановить именованный плейлист, добавьте его из сохранённой подборки: повторов видео не будет.";card.append(note);
-        items.forEach((item,n)=>card.append(playlistRow(item,n,null)));container.append(card);
+    programmeViewKey=key;
+    const container=byId("queue");container.replaceChildren();
+    if(!selected) {
+        const grid=groupElement("div","library-grid");
+        for(const group of groups) {
+            const members=libraryMembers(group),ready=members.filter(videoReady).length;
+            if(readyOnly&&ready!==members.length)continue;
+            if(query&&!group.name.toLocaleLowerCase("ru").includes(query)&&!members.some(e=>(e.title||"").toLocaleLowerCase("ru").includes(query)))continue;
+            const card=groupElement("button","library-card");card.type="button";card.dataset.openGroup=group.id;
+            const duration=members.every(e=>Number.isFinite(e.durationSeconds))?formatDuration(members.reduce((sum,e)=>sum+e.durationSeconds,0)):"длительность уточняется";
+            card.append(groupCover(group,members),groupElement("h3","",group.name),groupElement("p","small muted",`${members.length} видео · ${duration}`));
+            const bar=groupElement("div","library-progress"),fill=groupElement("span");fill.style.width=(members.length?100*ready/members.length:0)+"%";bar.append(fill);card.append(bar,groupElement("span","badge",ready===members.length?"Всё скачано":`${ready} из ${members.length} скачано`));grid.append(card);
+        }
+        container.append(grid);
+        if(!grid.children.length)container.append(groupElement("p","empty-library",state.items.length?"Ничего не найдено. Измените поиск или фильтр.":"Здесь появятся ваши плейлисты. Нажмите «Добавить» и выберите видео для детей."));
+        return;
     }
-    if(!state.items.length) {const p=document.createElement("p");p.textContent="Программа пуста. Добавьте плейлист или отдельные видео.";container.append(p);}
+    const members=libraryMembers(selected),index=(state.groups||[]).findIndex(g=>g.id===selected.id),realGroup=selected.id!=="ungrouped";
+    const head=groupElement("div","library-detail-head"),text=groupElement("div");
+    text.append(groupElement("h2","",selected.name),groupElement("p","small muted",`${groupSourceNames[selected.source]||"Ваши видео"} · ${members.length} видео · скачано ${members.filter(videoReady).length}`));head.append(groupCover(selected,members),text);container.append(head);
+    if(realGroup) {
+        const controls=groupElement("div","library-detail-controls");
+        const current=state.items[state.currentIndex],active=state.activeGroupId===selected.id&&members.some(e=>e.queueItemId===current?.queueItemId);
+        if(active&&!state.finished&&state.positionMs>0){const resume=groupButton("Продолжить с "+resumeTime(state.positionMs),"watch-video",selected.id);resume.dataset.itemId=current.queueItemId;resume.disabled ||= !videoCanWatch(current);controls.append(resume);}
+        const play=groupButton("Смотреть сначала","play",selected.id);play.disabled ||= !members[0]||!videoCanWatch(members[0]);controls.append(play,groupButton("Скачать плейлист","prepare",selected.id),groupButton("Изменить порядок","edit",selected.id));
+        const more=groupElement("details"),body=groupElement("div","more-actions");more.append(groupElement("summary","","Ещё"),body);
+        const up=groupButton("↑ Выше в медиатеке","up",selected.id);up.disabled ||= index<=0;
+        const down=groupButton("↓ Ниже в медиатеке","down",selected.id);down.disabled ||= index===(state.groups||[]).length-1;
+        body.append(up,down,groupButton("Убрать плейлист из программы","remove",selected.id));controls.append(more);container.append(controls);
+    }
+    container.append(groupElement("p","muted small","Это сохранённый порядок просмотра. Приоритет скачивания его не меняет. В конце выбранного плейлиста — остановка."));
+    members.forEach((item,n)=>{if(!query||selected.name.toLocaleLowerCase("ru").includes(query)||(item.title||"").toLocaleLowerCase("ru").includes(query))container.append(playlistRow(item,n,realGroup?selected.id:null));});
 }
 async function programmeAction(button) {
     if(groupRequestBusy || !state)return;
@@ -123,3 +137,8 @@ async function programmeAction(button) {
 }
 byId("queue").addEventListener("click",event=>{const button=event.target.closest("button[data-group-action]");if(button)run(()=>programmeAction(button));});
 if(state)renderQueue();
+
+byId("queue").addEventListener("click",event=>{const button=event.target.closest("button[data-open-group]");if(button){libraryGroupId=button.dataset.openGroup;programmeViewKey=null;renderQueue();}});
+byId("libraryBack")?.addEventListener("click",()=>{if(queueOrder)cancelQueueOrder();libraryGroupId=null;programmeViewKey=null;renderQueue();});
+byId("librarySearch")?.addEventListener("input",()=>{programmeViewKey=null;renderQueue();});
+byId("libraryFilter")?.addEventListener("change",()=>{programmeViewKey=null;renderQueue();});

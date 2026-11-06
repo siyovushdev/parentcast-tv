@@ -26,6 +26,7 @@ class Media3PlaybackPlayer(
     context: android.content.Context,
     private val session: dev.siyovush.parentcast.tv.youtube.YouTubeSession =
         dev.siyovush.parentcast.tv.youtube.DisabledYouTubeSession,
+    private val allowLocalFile: (String, java.io.File) -> Boolean = { _, _ -> false },
 ) : PlaybackPlayer {
     private val context = context.applicationContext
     private var playerView: PlayerView? = null
@@ -103,9 +104,9 @@ class Media3PlaybackPlayer(
         activeGeneration = generation
         activeVideo = video
         hasRenderedFirstFrame = false
-        val videoSource = progressiveSource(video.video)
+        val videoSource = progressiveSource(video.videoId, video.video)
         val source = video.audio?.let { audio ->
-            MergingMediaSource(videoSource, progressiveSource(audio))
+            MergingMediaSource(videoSource, progressiveSource(video.videoId, audio))
         } ?: videoSource
         player.setMediaSource(source)
         player.seekTo(positionMs.coerceAtLeast(0))
@@ -145,7 +146,7 @@ class Media3PlaybackPlayer(
         player.release()
     }
 
-    private fun progressiveSource(spec: StreamSpec): MediaSource {
+    private fun progressiveSource(videoId: String, spec: StreamSpec): MediaSource {
         val headers = spec.headers
             .filterKeys { !it.equals("User-Agent", ignoreCase = true) }
             .toMutableMap()
@@ -153,8 +154,8 @@ class Media3PlaybackPlayer(
         require(isLocal || spec.provider != dev.siyovush.parentcast.tv.media.MediaProvider.VK) { "VK requires a prepared private file" }
         if (isLocal) {
             val file = java.io.File(java.net.URI(spec.url)).canonicalFile
-            val root = java.io.File(context.noBackupFilesDir, "prepared-programme").canonicalFile
-            require(file.parentFile == root && file.name.matches(Regex(dev.siyovush.parentcast.tv.media.OnlineMediaIds.MEDIA_PATTERN + "[.](video|audio)[.]mp4")))
+            // Only catalogue-approved tracks on an available application-owned volume.
+            require(allowLocalFile(videoId, file)) { "Prepared file is unavailable or outside the library" }
         }
         val cookieHeader = if (isLocal) null else dev.siyovush.parentcast.tv.youtube.CookieHeaderCodec.merge(
             emptyList(), session.cookiesFor(spec.url.toHttpUrl()),
