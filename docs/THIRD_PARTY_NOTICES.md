@@ -10,7 +10,7 @@
 | yt-dlp zipapp | `2026.10.26`, SHA-256 `e51e69e89489f199530f13d32a4342da3ddb2cf34842f364603a066db05afbf3` | Unlicense | https://github.com/yt-dlp/yt-dlp/releases/tag/2026.10.26 |
 | yt-dlp-ejs | `0.8.0` | Unlicense; bundled MIT/ISC components | https://github.com/yt-dlp/ejs |
 | QuickJS | `2025-04-26` | MIT | https://github.com/bellard/quickjs |
-| AndroidX Media3 Exoplayer/UI | `1.5.1` | Apache-2.0 | https://github.com/androidx/media/tree/1.5.1 |
+| AndroidX Media3 Exoplayer/UI/Database | `1.5.1` | Apache-2.0 | https://github.com/androidx/media/tree/1.5.1 |
 | Jackson databind | `2.11.1` | Apache-2.0 | https://github.com/FasterXML/jackson-databind |
 | Commons IO | `2.5` | Apache-2.0 | https://github.com/apache/commons-io |
 | OkHttp | `4.12.0` | Apache-2.0 | https://github.com/square/okhttp/tree/parent-4.12.0 |
@@ -24,7 +24,7 @@ youtubedl-android не перелицензируются; их свободны
 
 Транзитивные зависимости остаются под собственными лицензиями. Их точные координаты можно
 получить командой `./gradlew app:dependencies --configuration debugRuntimeClasspath`.
-Тестовые JUnit 4.13.2, kotlinx-coroutines-test 1.9.0 и org.json 20240303 не включаются в debug APK
+Тестовые JUnit 4.13.2, kotlinx-coroutines-test 1.9.0, org.json 20240303 и Robolectric4.14.1 не включаются в debug APK
 как runtime-компоненты приложения.
 
 ## Домашний пульт

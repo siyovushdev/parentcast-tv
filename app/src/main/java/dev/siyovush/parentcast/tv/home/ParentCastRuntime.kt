@@ -13,6 +13,10 @@ import dev.siyovush.parentcast.tv.playlist.*
 import dev.siyovush.parentcast.tv.collections.AtomicCollectionStore
 import kotlinx.coroutines.*
 import java.io.File
+import org.json.JSONObject
+import org.json.JSONArray
+import dev.siyovush.parentcast.tv.streaming.StreamingRuntime
+import dev.siyovush.parentcast.tv.streaming.StreamStatus
 
 /** One process owner for player, queue and LAN API. Activity only attaches a view/observer. */
 internal class ParentCastRuntime(context: Context, private val changed: (CoordinatorSnapshot) -> Unit) {
@@ -22,8 +26,9 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
     val network = HomeNetwork(app, PORT)
     val session = PreparedRuntime.session(app)
     val prepared = PreparedRuntime.get(app, session)
-    val player = Media3PlaybackPlayer(app, session, prepared::allowsPlaybackFile)
-    val coordinator = PlaybackCoordinator(PreparedYouTubeSource(prepared, YtDlpYouTubeSource(app, session)),
+    val streaming = StreamingRuntime.get(app, prepared, session)
+    val player = Media3PlaybackPlayer(app, session, prepared::allowsPlaybackFile, streaming::dataSourceFactory)
+    val coordinator = PlaybackCoordinator(streaming.source(PreparedYouTubeSource(prepared, YtDlpYouTubeSource(app, session))),
         AtomicQueueStore(File(app.filesDir, "queue-state.json")), player, scope,
         autoResumeOnStartup = ParentModeSettings(app).autoResumeAfterBoot,
         authorizationGate = { prepared.snapshot().enabled || !session.isSupported || session.isEnabled },
@@ -35,6 +40,12 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
     private fun mediaDuration(id: String): Long? = prepared.mediaDuration(id) ?: durations.getOrRequest(id)
     private val thumbnailSource = AndroidThumbnails(app, prepared::thumbnailFile)
     private val thumbnails = ThumbnailApi(File(app.cacheDir, "web-thumbnails"), scope, thumbnailSource::generate)
+    val covers = PlaylistCovers(File(app.noBackupFilesDir,"playlist-covers"),CoverImages::normalize,
+        { id, position -> CoverImages.frame(prepared.thumbnailFile(id),position) })
+    suspend fun childCover(group: QueueGroup): ByteArray? = withContext(Dispatchers.IO) {
+        group.coverImageId?.let(covers::imageFile)?.readBytes()
+            ?: (group.coverVideoId ?: group.videoIds.firstOrNull())?.let { thumbnailSource.generate(it) }
+    }
     private val previews = PlaylistPreviewManager(PlaylistSource { id ->
         YtDlpPlaylistSource(app).fetch(id).also { result ->
             durations.rememberAll(result.entries.mapNotNull { e -> e.videoId?.let { id -> e.durationSeconds?.let { id to it } } }.toMap())
@@ -44,6 +55,20 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
     private val observers = mutableSetOf<(CoordinatorSnapshot) -> Unit>()
     private val addresses = LocalAddressProvider()
     private val dispatcher = MainThreadDispatcher(handler)
+    private val online = OnlineVideoApi(coordinator,dispatcher,scope,File(app.noBackupFilesDir,"online-video-commands.json"),
+        previewSource = { id -> streaming.preview(id).let { p ->
+            JSONObject().put("videoId",p.videoId).put("title",p.title).put("durationSeconds",p.durationSeconds)
+                .put("thumbnailUrl",p.thumbnailUrl ?: JSONObject.NULL)
+                .put("qualities",JSONArray().apply { p.qualities.forEach { q ->
+                    put(JSONObject().put("id",q.id).put("height",q.height).put("sizeBytes",q.sizeBytes ?: JSONObject.NULL))
+                } })
+        } },
+        startSaving = { id,quality,storage,version,watch -> streaming.start(id,quality,storage,version,watch); Unit },
+        displayReady = { dispatcher.call { player.hasVisibleView() } },
+        remember = { id,data ->
+            data.optLong("durationSeconds").takeIf { it>0 }?.let { durations.rememberAll(mapOf(id to it)) }
+            thumbnailSource.remember(id,data.optString("thumbnailUrl").takeUnless { it=="null" || it.isBlank() })
+        })
     val usb = dev.siyovush.parentcast.tv.local.UsbSource(app)
     private val localMedia = dev.siyovush.parentcast.tv.local.LocalVideoApi(prepared,coordinator,dispatcher,File(app.noBackupFilesDir,"local-import-jobs.json"),scope,::devLocalValidate,usb)
     private val controller: ApiController
@@ -80,15 +105,19 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
             { path -> app.assets.open(path).bufferedReader().use { it.readText() } }, playlists,
             PreparedApi(prepared, coordinator, dispatcher, ::mediaDuration), connectUrls = { network.urls() }, displayReady = { dispatcher.call { player.hasVisibleView() } }, localMedia = localMedia, mediaTitle = prepared::mediaTitle, mediaDuration = ::mediaDuration,
             storage = StorageApi(prepared, coordinator, dispatcher),
+            programme = ProgrammeApi(coordinator,dispatcher,covers::exists), covers = covers, online = online,
+            streamingState = { current -> JSONObject().put("entries",JSONArray().apply { streaming.states().forEach { put(streamStatus(it)) } })
+                .put("current",current?.let(streaming::state)?.let(::streamStatus) ?: JSONObject.NULL) },
             thumbnail = { id, owner ->
                 val allowed = dispatcher.call { coordinator.currentSnapshot().queueState.items.any { it.videoId == id } } ||
-                    prepared.localEntries().any { it.id == id } || playlists.containsVideo(owner, id)
+                    prepared.localEntries().any { it.id == id } || playlists.containsVideo(owner, id) || online.containsVideo(owner,id)
                 thumbnails.read(id, allowed)
             })
         controller = api
         coordinator.setListener { snapshot ->
             val q = snapshot.queueState
             prepared.syncQueue(q)
+            streaming.syncPlayback(q.currentItem?.videoId?.takeIf { q.intent==PlaybackIntent.PLAY })
             changed(snapshot)
             observers.toList().forEach { it(snapshot) }
         }
@@ -101,10 +130,14 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
     fun unobserve(observer: (CoordinatorSnapshot) -> Unit) { observers -= observer }
     fun close() {
         runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
-        handler.removeCallbacksAndMessages(null); server?.stop(); durations.close(); thumbnails.close(); previews.close(); network.close(); localMedia.close()
+        handler.removeCallbacksAndMessages(null); server?.stop(); durations.close(); thumbnails.close(); previews.close(); online.close(); network.close(); localMedia.close()
         try { coordinator.savePosition() } finally { coordinator.close(); player.release(); scope.cancel(); observers.clear() }
     }
     companion object { const val PORT = 8765 }
 }
+
+private fun streamStatus(s:StreamStatus)=JSONObject().put("videoId",s.videoId).put("mode",s.mode).put("quality",s.quality)
+    .put("height",s.height).put("downloadedBytes",s.downloadedBytes).put("totalBytes",s.totalBytes ?: JSONObject.NULL)
+    .put("percent",s.percent ?: JSONObject.NULL).put("error",s.error.takeIf {it.isNotBlank()} ?: JSONObject.NULL)
 
 private fun devLocalValidate(file: File) = dev.siyovush.parentcast.tv.local.validateLocalMedia(file)

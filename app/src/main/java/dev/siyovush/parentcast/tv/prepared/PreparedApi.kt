@@ -10,7 +10,8 @@ import org.json.JSONObject
 internal class PreparedApi(private val library: PreparedLibrary, private val coordinator: PlaybackCoordinator, private val dispatcher: CallDispatcher, private val metadataDuration: (String) -> Long? = { null }) {
     val uploadLimit:Long get() = EXTERNAL_LIBRARY_LIMIT
     fun readiness(id: String): String = library.mediaReadiness(id)
-    fun canPlay(id: String): Boolean = readiness(id) == "READY" ||
+    fun canStream(id:String)=library.streaming?.canPlayDuringDownload(id)==true
+    fun canPlay(id: String): Boolean = readiness(id) == "READY" || library.streaming?.canPlayDuringDownload(id)==true ||
         (readiness(id)!="STORAGE_BUSY" && readiness(id)!="STORAGE_UNAVAILABLE" && !library.snapshot().enabled && !id.startsWith("local_") && !dev.siyovush.parentcast.tv.media.OnlineMediaIds.isVk(id))
     fun state(): JSONObject {
         val s = library.snapshot(); val entries = JSONArray()
@@ -47,7 +48,11 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
         }
         val groupId = json.optString("groupId").takeIf { it.isNotBlank() }
         val group = groupId?.let { id -> snapshot.queueState.groups.find { it.id == id } ?: return 400 to "{\"error\":\"BAD_REQUEST\"}" }
-        val ids = group?.videoIds ?: snapshot.queueState.remainingItems().filterNot { it.local }.map { it.videoId }
+        val explicit=if(json.has("videoIds"))try {
+            require(action=="ENABLE" && groupId==null);val values=json.getJSONArray("videoIds");require(values.length() in 1..500)
+            List(values.length()){ values.getString(it) }.also { ids ->require(ids.distinct().size==ids.size && ids.all { id -> snapshot.queueState.items.any { it.videoId==id && !it.local } }) }
+        }catch(_:Exception){return 400 to "{\"error\":\"BAD_REQUEST\"}"} else null
+        val ids = explicit ?: group?.videoIds ?: snapshot.queueState.remainingItems().filterNot { it.local }.map { it.videoId }
         return try {
             if (action in setOf("DELETE", "DELETE_ALL")) {
                 val result = dispatcher.call {
@@ -70,7 +75,7 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
                         val storageId=json.optString("storageId").takeIf { it.isNotEmpty() }
                         val storageVersion=if(json.has("storageVersion"))json.get("storageVersion").also { require(it is Int || it is Long) }.let { (it as Number).toLong() } else null
                         require((storageId==null)==(storageVersion==null))
-                        library.configure(true, ids, groupId,storageId,storageVersion)
+                        library.configure(true, ids, groupId,storageId,storageVersion,explicitSelection=json.has("videoIds"))
                     }
                     "DISABLE" -> library.configure(false, ids)
                     "PAUSE" -> library.pause()

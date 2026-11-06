@@ -1,6 +1,11 @@
 # План реализации
 
-Текущая задача06.11.2026: семейная медиатека и microSD реализованы;
+Текущая задача: `tasks/Family-playback-experience.md`, реализована. VK stream+save,
+веб-пульт и детский экран H728 проверены; YouTube preview завершился тайм-аутом, ранний
+просмотр YouTube не подтверждён; физическая microSD/reboot NOT_RUN. Отдельная ветка от
+PR #18, без Merge. Результаты: `docs/reports/Family-playback-experience.md`.
+
+Предыдущее задание 06.11.2026: семейная медиатека и microSD реализованы;
 веб-пульт/обычное обновление H728 проверены, физическая microSD — NOT_RUN до подключения.
 `tasks/Family-library-sd.md`, результаты `docs/reports/Family-library-sd.md`.
 Отдельный одобренный scope после HOME BETA, stacked от PR #17, без Merge и системных изменений.

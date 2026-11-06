@@ -149,6 +149,7 @@ async function importUsbSelected() {
 
 function startQueueOrder(groupId) {
     if(!state)return;
+    if(typeof openProgrammeEditor === "function") {openProgrammeEditor(typeof groupId==="string"?groupId:null);return;}
     const group=typeof groupId === "string" ? (state.groups || []).find(g=>g.id === groupId) : null;
     if(group) {
         const items=group.videoIds.map(id=>state.items.find(e=>e.videoId === id)).filter(Boolean);
@@ -168,14 +169,13 @@ function episodeNumber(title) {
 function sortDraft() {
     if(!state||!queueOrder)return;
     const mode=byId("queueSortMode").value;const items=new Map(state.items.map(e=>[e.queueItemId,e]));
-    const ready=new Set([...(state.prepared?.files || []).map(e=>e.videoId),...(state.prepared?.entries || []).filter(e=>e.status==="READY").map(e=>e.videoId)]);
     const title=id=>items.get(id)?.title || items.get(id)?.videoId || "";
     if(mode==="reverse")queueOrder.ids.reverse();
     else if(mode==="episode")queueOrder.ids.sort((a,b)=> {
         const first=episodeNumber(items.get(a)?.title),second=episodeNumber(items.get(b)?.title);
         return first===null ? (second===null ? 0 : 1) : second===null ? -1 : first-second;
     });
-    else queueOrder.ids.sort((a,b)=>mode==="ready"?Number(items.get(b)?.ready===true || (items.get(b)?.ready===undefined && Boolean(items.get(b)?.local)) || ready.has(items.get(b)?.videoId))-Number(items.get(a)?.ready===true || (items.get(a)?.ready===undefined && Boolean(items.get(a)?.local)) || ready.has(items.get(a)?.videoId)):title(a).localeCompare(title(b),"ru",{numeric:true})*(mode==="title-desc"?-1:1));
+    else queueOrder.ids.sort((a,b)=>mode==="ready"?Number(videoReady(items.get(b)||{}))-Number(videoReady(items.get(a)||{})):title(a).localeCompare(title(b),"ru",{numeric:true})*(mode==="title-desc"?-1:1));
     renderQueue();
 }
 function renderQueueEditor() {

@@ -101,7 +101,7 @@ internal class PreparedStorage(
     }
     fun rootFor(id: String, write: Boolean = false) = root(placement(id), write)
     fun available(id: String): Boolean = runCatching { rootFor(id); true }.getOrDefault(false)
-    fun usedBytes(storageId: String): Long = runCatching { root(storageId).listFiles().orEmpty().filter(::isMediaFile).sumOf { it.length() } }.getOrDefault(0)
+    fun usedBytes(storageId: String): Long = runCatching { mediaBytes(root(storageId)) }.getOrDefault(0)
     fun allDirectories(): List<File> = volumes().filter { it.mounted && it.directory?.isDirectory == true }.mapNotNull { it.directory }
     @Synchronized fun checkVersion(expected: Long) { check(!invalid) { "STORAGE_CATALOGUE_ERROR" }; check(version == expected) { "STORAGE_CHANGED" } }
     @Synchronized fun select(id: String, expected: Long, command:StorageCommand?=null) {
@@ -178,6 +178,10 @@ internal class PreparedStorage(
         selected=selectedId;placements=routes;names=known;originals=backups;migration=nextMigration;receipts=nextReceipts;staged=staging;version++
     }
     companion object {
+        fun mediaBytes(root:File):Long = root.listFiles().orEmpty().sumOf { file ->
+            if(isMediaFile(file))file.length() else if(file.name=="stream-cache" && file.isDirectory && file.canonicalFile.parentFile==root.canonicalFile)
+                file.walkTopDown().filter { it.isFile && it.canonicalPath.startsWith(file.canonicalPath+File.separator) }.sumOf { it.length() } else 0L
+        }
         fun isMediaFile(file: File) = file.isFile && (file.name.endsWith(".mp4") || file.name.endsWith(".part") || file.name.endsWith(".copying"))
         fun physicalName(id:String,name:String,external:Boolean):String {
             require(MEDIA_ID.matches(id) && name in listOf("$id.video.mp4","$id.audio.mp4"))
@@ -186,7 +190,7 @@ internal class PreparedStorage(
             return hash+name.removePrefix(id)
         }
         fun safeFile(root:File,name:String):File = File(root,name).also { check(it.canonicalFile.parentFile==root.canonicalFile) { "STORAGE_PATH_INVALID" } }
-        fun files(root:File,id:String,external:Boolean=false):List<File> = listOf("$id.video.mp4","$id.audio.mp4").flatMap { name -> val n=physicalName(id,name,external);listOf(safeFile(root,n),safeFile(root,"$n.part"),safeFile(root,"$n.resume.json"),safeFile(root,"$n.resume.json.tmp")) }
+        fun files(root:File,id:String,external:Boolean=false):List<File> = listOf("$id.video.mp4","$id.audio.mp4").flatMap { name -> val n=physicalName(id,name,external);listOf(safeFile(root,n),safeFile(root,"$n.part"),safeFile(root,"$n.stream.part"),safeFile(root,"$n.resume.json"),safeFile(root,"$n.resume.json.tmp")) }
         private fun tracksJson(tracks:List<LocalTrack>)=JSONArray().apply { tracks.forEach { put(JSONObject().put("name",it.name).put("bytes",it.bytes).put("sha256",it.sha256)) } }
         private fun readTracks(id:String,a:JSONArray)=List(a.length()) { i -> val t=a.getJSONObject(i);val name=t.getString("name");require(name in listOf("$id.video.mp4","$id.audio.mp4"));LocalTrack(name,t.getLong("bytes"),t.getString("sha256")) }
     }

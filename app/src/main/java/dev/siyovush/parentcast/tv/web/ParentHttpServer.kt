@@ -8,7 +8,7 @@ internal class ParentHttpServer(
     private val controller: ApiController,
 ) : NanoHTTPD("0.0.0.0", port) {
     override fun serve(session: IHTTPSession): Response {
-        if(session.uri.startsWith("/api/local/upload/")) {
+        if(session.uri.startsWith("/api/local/upload/") || session.uri=="/api/covers") {
             val request=ApiRequest(session.method.name,session.uri,session.headers.mapKeys { it.key.lowercase() },"",session.remoteIpAddress)
             val result=controller.upload(request,session.headers["content-length"]?.toLongOrNull() ?: -1,session.inputStream)
             return respond(result).apply { closeConnection(true) }

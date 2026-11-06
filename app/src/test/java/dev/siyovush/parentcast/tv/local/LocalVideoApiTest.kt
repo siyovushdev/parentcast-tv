@@ -212,6 +212,6 @@ class LocalVideoApiTest {
         val legacy=JSONObject(QueueSnapshotCodec.encode(original)).put("version",1);legacy.getJSONArray("items").getJSONObject(0).remove("local")
         assertFalse(QueueSnapshotCodec.decode(legacy.toString()).currentItem!!.local)
         val local=original.copy(items=listOf(QueueItem("local","local_"+"a".repeat(32),true)))
-        val encoded=QueueSnapshotCodec.encode(local);assertEquals(3,JSONObject(encoded).getInt("version"));assertTrue(QueueSnapshotCodec.decode(encoded).currentItem!!.local)
+        val encoded=QueueSnapshotCodec.encode(local);assertEquals(4,JSONObject(encoded).getInt("version"));assertTrue(QueueSnapshotCodec.decode(encoded).currentItem!!.local)
     }
 }

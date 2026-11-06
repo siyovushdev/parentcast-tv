@@ -9,6 +9,7 @@ data class StreamSpec(
     val sizeBytes: Long? = null,
     val resumeIdentity: String = "",
     val provider: dev.siyovush.parentcast.tv.media.MediaProvider = dev.siyovush.parentcast.tv.media.MediaProvider.YOUTUBE,
+    val sharedCacheKey: String? = null,
 )
 
 data class ResolvedVideo(

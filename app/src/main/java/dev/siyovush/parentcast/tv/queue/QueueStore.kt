@@ -15,7 +15,7 @@ interface QueueStore {
 }
 
 object QueueSnapshotCodec {
-    private const val VERSION = 3
+    private const val VERSION = 4
 
     fun encode(state: QueueState): String {
         val items = JSONArray()
@@ -29,7 +29,8 @@ object QueueSnapshotCodec {
         return JSONObject()
             .put("version", VERSION)
             .put("items", items)
-            .put("groups", JSONArray().apply { state.groups.forEach { g -> put(JSONObject().put("id",g.id).put("name",g.name).put("videoIds",JSONArray(g.videoIds)).put("source",g.source.name)) } })
+            .put("groups", JSONArray().apply { state.groups.forEach { g -> put(ProgrammeCodec.group(g)) } })
+            .put("programme", ProgrammeCodec.encode(state))
             .put("activeGroupId", state.activeGroupId ?: JSONObject.NULL)
             .put("currentIndex", state.currentIndex)
             .put("positionMs", state.positionMs)
@@ -68,8 +69,7 @@ object QueueSnapshotCodec {
         }
         return QueueState(
             items = items,
-            groups = root.optJSONArray("groups")?.let { a -> List(a.length()) { n -> val g=a.getJSONObject(n);val ids=g.getJSONArray("videoIds")
-                QueueGroup(g.getString("id"),g.getString("name"),List(ids.length()) { ids.getString(it) },QueueGroupSource.valueOf(g.getString("source"))) } }.orEmpty(),
+            groups = root.optJSONArray("groups")?.let { a -> List(a.length()) { n -> ProgrammeCodec.readGroup(a.getJSONObject(n)) } }.orEmpty(),
             activeGroupId = root.optString("activeGroupId").takeUnless { it.isBlank() || it == "null" },
             currentIndex = root.getInt("currentIndex"),
             positionMs = root.getLong("positionMs"),
@@ -83,7 +83,7 @@ object QueueSnapshotCodec {
                         receipt.optJSONObject("addition")?.let { QueueAddition(it.getInt("added"), it.getInt("skipped"), it.optString("groupId").takeUnless { v -> v.isBlank() || v=="null" }) })
                 }
             } ?: emptyList(),
-        )
+        ).let { ProgrammeCodec.decodeInto(it, root.optJSONObject("programme")) }
     }
 }
 

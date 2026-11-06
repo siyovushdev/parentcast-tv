@@ -27,6 +27,7 @@ class Media3PlaybackPlayer(
     private val session: dev.siyovush.parentcast.tv.youtube.YouTubeSession =
         dev.siyovush.parentcast.tv.youtube.DisabledYouTubeSession,
     private val allowLocalFile: (String, java.io.File) -> Boolean = { _, _ -> false },
+    private val streamDataSource: (StreamSpec) -> androidx.media3.datasource.DataSource.Factory? = { null },
 ) : PlaybackPlayer {
     private val context = context.applicationContext
     private var playerView: PlayerView? = null
@@ -136,6 +137,7 @@ class Media3PlaybackPlayer(
     override fun seekTo(positionMs: Long) { player.seekTo(positionMs) }
 
     override fun currentPositionMs(): Long = player.currentPosition.coerceAtLeast(0)
+    override fun bufferedPositionMs():Long = player.bufferedPosition.coerceAtLeast(0)
 
     override fun release() {
         activeGeneration = 0
@@ -147,6 +149,11 @@ class Media3PlaybackPlayer(
     }
 
     private fun progressiveSource(videoId: String, spec: StreamSpec): MediaSource {
+        if(spec.sharedCacheKey!=null) {
+            require(spec.url.startsWith("parentcast-cache://"))
+            val factory=requireNotNull(streamDataSource(spec)) { "Shared cache unavailable" }
+            return ProgressiveMediaSource.Factory(factory).setLoadErrorHandlingPolicy(dev.siyovush.parentcast.tv.streaming.SharedLoadErrorPolicy()).createMediaSource(MediaItem.Builder().setUri(spec.url).setMimeType(spec.mimeType).build())
+        }
         val headers = spec.headers
             .filterKeys { !it.equals("User-Agent", ignoreCase = true) }
             .toMutableMap()

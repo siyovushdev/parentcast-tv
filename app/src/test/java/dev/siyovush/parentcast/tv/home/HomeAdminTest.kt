@@ -71,7 +71,7 @@ class HomeAdminTest {
         library.configure(true, listOf(first, second)); library.runWorker()
         assertTrue(store.verify(library.snapshot().entries.getValue(first)))
     }
-    @Test fun deletionSurvivesRestartAndLeavesSiblingPrivateDataUntouched() = runBlocking {
+    @Test(timeout=5000) fun deletionSurvivesRestartAndLeavesSiblingPrivateDataUntouched() = runBlocking {
         val root = temp.newFolder(); val store = PreparedStore(File(root, "media")); val sentinel = File(root, "parent-auth.xml").apply { writeText("synthetic private sentinel") }
         store.track(first).writeText("incomplete"); File(store.track(second).path + ".part").writeText("partial")
         store.write(PreparationState(true, true, listOf(first), mapOf(first to PreparedEntry(first)), deleting = listOf(first, second)))

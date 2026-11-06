@@ -38,7 +38,13 @@ internal class ApiController(
     private val thumbnail: ((String, String) -> ApiResponse)? = null,
     private val mediaDuration: (String) -> Long? = { null },
     private val storage: dev.siyovush.parentcast.tv.prepared.StorageApi? = null,
+    private val programme: ProgrammeApi? = null,
+    private val covers: PlaylistCovers? = null,
+    private val online: OnlineVideoApi? = null,
+    private val streamingState: ((String?) -> JSONObject)? = null,
 ) {
+    private class CommandLock(var users:Int=0)
+    private val commandLocks=mutableMapOf<String,CommandLock>()
     fun handle(request: ApiRequest): ApiResponse {
         if (!security.isHostAllowed(request.headers["host"])) {
             return ApiResponse(421, error("MISDIRECTED_HOST"))
@@ -53,6 +59,7 @@ internal class ApiController(
             request.method == "GET" && request.path == "/groups.js" -> staticAsset("web/groups.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/sections.js" -> staticAsset("web/sections.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/media.js" -> staticAsset("web/media.js", "text/javascript; charset=utf-8")
+            request.method == "GET" && request.path == "/experience.js" -> staticAsset("web/experience.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/style.css" -> staticAsset("web/style.css", "text/css; charset=utf-8")
             request.method == "GET" && request.path == "/api/health" -> ApiResponse(200, JSONObject().put("ok", true).put("version", 1).toString())
             request.method == "POST" && request.path == "/api/pair" -> pair(request)
@@ -65,6 +72,11 @@ internal class ApiController(
         if(!security.isHostAllowed(request.headers["host"])) return ApiResponse(421,error("MISDIRECTED_HOST"))
         val device=authorizedDevice(request.headers) ?: return ApiResponse(401,error("UNAUTHORIZED"))
         if(request.method!="POST" || !security.isStateChangeAllowed(request.headers)) return ApiResponse(403,error("FORBIDDEN"))
+        if(request.path=="/api/covers") {
+            if(request.headers.containsKey("transfer-encoding")) return ApiResponse(413,error("BODY_TOO_LARGE"))
+            if(request.headers["content-type"]?.substringBefore(';')?.trim()!="application/octet-stream") return ApiResponse(415,error("BAD_MEDIA_INPUT"))
+            return covers?.upload(length,input) ?: ApiResponse(404,error("NOT_FOUND"))
+        }
         if(length !in 1..(prepared?.uploadLimit ?: dev.siyovush.parentcast.tv.prepared.LIBRARY_LIMIT) || request.headers.containsKey("transfer-encoding")) return ApiResponse(413,error("BODY_TOO_LARGE"))
         if(request.headers["content-type"]?.substringBefore(';')?.trim()!="application/octet-stream") return ApiResponse(415,error("BAD_MEDIA_INPUT"))
         val id=request.path.removePrefix("/api/local/upload/")
@@ -93,16 +105,32 @@ internal class ApiController(
         val device = authorizedDevice(request.headers) ?: return ApiResponse(401, error("UNAUTHORIZED"))
         if (request.method == "GET" && request.path.startsWith("/api/thumbnails/")) return thumbnail?.invoke(request.path.removePrefix("/api/thumbnails/"), device.deviceId) ?: ApiResponse(404, error("NOT_FOUND"))
         if (request.method == "GET" && request.path == "/api/state") return ApiResponse(200, stateBody())
+        if (request.method == "GET" && request.path == "/api/programme") return programme?.read() ?: ApiResponse(404,error("NOT_FOUND"))
+        if (request.method == "GET" && request.path.startsWith("/api/covers/")) {
+            val id=request.path.removePrefix("/api/covers/")
+            val allowed=dispatcher.call { coordinator.currentSnapshot().queueState.groups.any { it.coverImageId==id } }
+            return covers?.read(id,allowed) ?: ApiResponse(404,error("NOT_FOUND"))
+        }
         if (request.method == "GET" && request.path == "/api/prepared") return ApiResponse(200, prepared?.state()?.toString() ?: "{}")
         if (request.method == "GET" && request.path == "/api/storage") return storage?.let { ApiResponse(200, it.state().toString()) } ?: ApiResponse(404, error("NOT_FOUND"))
         if (request.method == "GET" && request.path == "/api/devices") return devices()
         if (request.method == "GET") {
+            online?.read(request.path,device.deviceId)?.let { return it }
             localMedia?.read(request.path, device.deviceId)?.let { return it }
             playlists?.read(request.path, device.deviceId)?.let { return it }
         }
         if (request.method != "POST") return ApiResponse(404, error("NOT_FOUND"))
         if (!security.isStateChangeAllowed(request.headers)) return ApiResponse(403, error("FORBIDDEN"))
         return when (request.path) {
+            "/api/programme" -> mutation(request, device) { json ->
+                programme?.mutate(json,commandStorageKey(request,device,json),requestFingerprint(json))?.let { it.code to it.body } ?: (404 to error("NOT_FOUND"))
+            }
+            "/api/covers/frame" -> mutation(request, device) { json ->
+                val id=json.optString("videoId");val position=json.opt("positionMs")
+                val allowed=dispatcher.call { coordinator.currentSnapshot().queueState.items.any { it.videoId==id } }
+                if(!allowed || position !is Number || (position !is Int && position !is Long)) 400 to error("BAD_REQUEST")
+                else covers?.frame(id,position.toLong())?.let { it.code to it.body } ?: (404 to error("NOT_FOUND"))
+            }
             "/api/storage" -> mutation(request, device) { json ->
                 storage?.mutate(json, commandStorageKey(request, device, json), requestFingerprint(json)) ?: (404 to error("NOT_FOUND"))
             }
@@ -181,7 +209,9 @@ internal class ApiController(
             }
             "/api/queue/clear" -> mutation(request, device) { json -> clearPending(json) }
             "/api/devices/revoke" -> mutation(request, device) { json -> revoke(json) }
-            else -> if(localMedia?.handles(request.path)==true) {
+            else -> if(online?.handles(request.path)==true) {
+                mutation(request,device) { json -> online.mutate(request.path,device.deviceId,json,commandStorageKey(request,device,json),requestFingerprint(json)).let {it.code to it.body} }
+            } else if(localMedia?.handles(request.path)==true) {
                 mutation(request,device) { json -> localMedia.mutate(request.path,device.deviceId,json,commandStorageKey(request,device,json),requestFingerprint(json)) }
             } else if (playlists?.handles(request.path) == true) {
                 mutation(request, device) { json ->
@@ -197,7 +227,6 @@ internal class ApiController(
         return tokenStore.verify(authorization.removePrefix("Bearer ").trim())
     }
 
-    @Synchronized
     private fun mutation(
         request: ApiRequest,
         device: DeviceRecord,
@@ -207,7 +236,13 @@ internal class ApiController(
         val key = json.optString("idempotencyKey")
         if (key.length < 8 || key.length > 100) return ApiResponse(400, error("BAD_REQUEST"))
         val storageKey = commandStorageKey(request, device, json)
-        val fingerprint = if (playlists?.handles(request.path) == true || localMedia?.handles(request.path)==true || request.path in setOf("/api/queue/add", "/api/prepared", "/api/storage", "/api/queue/clear-all", "/api/queue/reorder", "/api/queue/select", "/api/queue/group-order", "/api/queue/group-remove")) requestFingerprint(json) else null
+        val lock=synchronized(commandLocks){commandLocks.getOrPut(storageKey){CommandLock()}.also {it.users++}}
+        return try { synchronized(lock){ mutateLocked(request,json,storageKey,action) } }
+        finally { synchronized(commandLocks){lock.users--;if(lock.users==0)commandLocks.remove(storageKey)} }
+    }
+
+    private fun mutateLocked(request:ApiRequest,json:JSONObject,storageKey:String,action:(JSONObject)->Pair<Int,String>):ApiResponse {
+        val fingerprint = if (online?.handles(request.path)==true || playlists?.handles(request.path) == true || localMedia?.handles(request.path)==true || request.path in setOf("/api/queue/add", "/api/prepared", "/api/storage", "/api/programme", "/api/covers/frame", "/api/queue/clear-all", "/api/queue/reorder", "/api/queue/select", "/api/queue/group-order", "/api/queue/group-remove")) requestFingerprint(json) else null
         idempotencyStore.get(storageKey)?.let {
             val legacyAdd = request.path == "/api/queue/add" && it.requestFingerprint == null
             if (fingerprint != null && !legacyAdd && it.requestFingerprint != fingerprint) return ApiResponse(409, error("IDEMPOTENCY_KEY_REUSED"))
@@ -323,7 +358,9 @@ internal class ApiController(
     internal fun stateBody(): String {
         val snapshot = dispatcher.call { coordinator.currentSnapshot() }
         return snapshotJson(snapshot).apply {
+            programme?.let { put("programme",it.state(snapshot)) }
             prepared?.let { put("prepared", it.state()) }
+            streamingState?.let { put("streaming",it(snapshot.queueState.currentItem?.videoId)) }
             connectUrls?.let { put("connectUrls", JSONArray(it())) }
             displayReady?.let { put("displayReady", it()) }
         }.toString()
@@ -337,7 +374,7 @@ internal class ApiController(
                 JSONObject()
                     .put("queueItemId", item.queueItemId)
                     .put("durationSeconds",mediaDuration(item.videoId) ?: JSONObject.NULL).put("videoId", item.videoId).put("local",item.local).put("title",mediaTitle(item.videoId).ifBlank { item.title })
-                    .put("preparationStatus",readiness ?: JSONObject.NULL).put("ready",readiness=="READY"),
+                    .put("preparationStatus",readiness ?: JSONObject.NULL).put("ready",readiness=="READY").put("canStream",prepared?.canStream(item.videoId)==true),
             )
         }
         val error = snapshot.error?.let { failure ->
@@ -348,10 +385,11 @@ internal class ApiController(
         return JSONObject()
             .put("queueVersion", snapshot.queueState.version)
             .put("items", items)
-            .put("groups",JSONArray().apply { snapshot.queueState.groups.forEach { g -> put(JSONObject().put("id",g.id).put("name",g.name).put("source",g.source.name).put("videoIds",JSONArray(g.videoIds))) } })
+            .put("groups",JSONArray().apply { snapshot.queueState.groups.forEach { g -> put(JSONObject().put("id",g.id).put("name",g.name).put("source",g.source.name).put("videoIds",JSONArray(g.videoIds)).put("favorite",g.favorite).put("coverVideoId",g.coverVideoId ?: JSONObject.NULL).put("coverImageId",g.coverImageId ?: JSONObject.NULL)) } })
             .put("activeGroupId",snapshot.queueState.activeGroupId ?: JSONObject.NULL)
             .put("currentIndex", snapshot.queueState.currentIndex)
             .put("positionMs", snapshot.queueState.positionMs)
+            .put("bufferedPositionMs",snapshot.bufferedPositionMs ?: JSONObject.NULL)
             .put("durationMs",snapshot.durationMs ?: snapshot.queueState.currentItem?.let { mediaDuration(it.videoId)?.times(1000) } ?: JSONObject.NULL)
             .put("seekable",snapshot.seekable).put("playbackGeneration",snapshot.generation)
             .put("intent", snapshot.queueState.intent.name)

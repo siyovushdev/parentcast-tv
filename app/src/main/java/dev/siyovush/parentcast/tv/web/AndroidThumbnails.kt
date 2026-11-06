@@ -87,7 +87,7 @@ internal class AndroidThumbnails(context: Context, private val localFile: (Strin
     private fun frame(file: File): ByteArray? = runCatching {
         val retriever = MediaMetadataRetriever()
         try {
-            retriever.setDataSource(file.path)
+            java.io.FileInputStream(file).use { retriever.setDataSource(it.fd) }
             val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0
             val timeUs = minOf(3_000L, duration / 10) * 1000
             (retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 320, 180)

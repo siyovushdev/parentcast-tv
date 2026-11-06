@@ -31,7 +31,7 @@ internal object PreparedRuntime {
                         instance?.serviceUnavailable()
                         android.util.Log.w("ParentCastPreparation", "Foreground start rejected; preparation paused")
                     }
-                } }, budget = budget, onFailure = { id, error -> android.util.Log.w("ParentCastPreparation", "$id: ${error.safeDiagnostic()}") }).also { instance = it }
+                } }, budget = budget, onFailure = { id, error -> android.util.Log.w("ParentCastPreparation", "$id: ${error.safeDiagnostic()}") }).also { instance = it;dev.siyovush.parentcast.tv.streaming.StreamingRuntime.get(app,it,session) }
         }
     }
     private fun validate(file: File, audio: Boolean, durationSeconds: Long) {

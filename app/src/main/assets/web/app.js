@@ -160,6 +160,7 @@ function renderState() {
     if (state.connectUrls) byId("homeConnectUrls").textContent = "Адреса пульта: " + state.connectUrls.join(" · ");
     updateSelectionControls();
     if (typeof renderFamilyState === "function") renderFamilyState();
+    if (typeof renderExperience === "function") renderExperience();
 }
 
 function renderPrepared() {
@@ -521,6 +522,7 @@ function forgetDevice() {
     pendingCommands = {};
     collections = [];
     if(typeof clearThumbnails === "function")clearThumbnails();
+    if(typeof clearExperienceAuth === "function")clearExperienceAuth();
     currentThumbnailId=null;
     if(typeof renderTimeline === "function")renderTimeline();
     localStorage.removeItem(DEVICE_KEY);
@@ -556,6 +558,7 @@ function queueAdditionMessage(result) {
 }
 
 function commandCompleted(path, payload, result) {
+    if(path==="/api/video/apply"&&typeof videoApplyFeedback==="function")videoApplyFeedback(result,payload);
     if (path === "/api/queue/add") {
         byId("commandMessage").textContent = queueAdditionMessage(result);
     } else if (path === "/api/playlists/preview") {
