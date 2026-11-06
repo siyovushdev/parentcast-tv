@@ -87,8 +87,22 @@ internal class PreparedStorage(
     }
     fun volume(id: String) = if(id == INTERNAL_STORAGE) MediaVolume(INTERNAL_STORAGE,"Память приставки",internalDirectory)
         else volumes().firstOrNull { it.id == id } ?: throw StorageUnavailable("STORAGE_NOT_FOUND")
-    fun limit(id: String): Long = if (id == INTERNAL_STORAGE) internalLimit else volume(id).totalBytes.let {
+    fun limit(id: String): Long = if (id == INTERNAL_STORAGE) internalLimit else limit(volume(id))
+    fun limit(observed:MediaVolume):Long = if(observed.id==INTERNAL_STORAGE)internalLimit else observed.totalBytes.let {
         if (it <= FREE_RESERVE) 0 else minOf(EXTERNAL_LIBRARY_LIMIT, it - FREE_RESERVE)
+    }
+    /** One fresh framework snapshot per write; its root, writable state and capacity stay together. */
+    fun writableVolume(id:String):MediaVolume = checkedWritable(volume(id))
+    fun writableVolume(directory:File):MediaVolume {
+        val canonical=directory.canonicalFile
+        val observed=if(canonical==internalDirectory.canonicalFile)volume(INTERNAL_STORAGE)
+            else volumes().firstOrNull { it.directory?.canonicalFile==canonical } ?: throw StorageUnavailable("STORAGE_UNAVAILABLE")
+        return checkedWritable(observed)
+    }
+    private fun checkedWritable(observed:MediaVolume):MediaVolume {
+        if(!healthy())throw StorageUnavailable("STORAGE_CATALOGUE_ERROR")
+        checkedRoot(observed,true)
+        return observed
     }
     fun root(storageId: String, write: Boolean = false): File {
         if (!healthy()) throw StorageUnavailable("STORAGE_CATALOGUE_ERROR")

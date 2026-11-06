@@ -20,18 +20,15 @@ internal class MediaBudget(private val root: File, private val limit: Long = LIB
     }
     @Synchronized fun write(output: FileOutputStream, bytes: ByteArray, count: Int, target:File? = null) {
         val destination=target?.parentFile ?: root
-        val volume=storage?.volumes()?.firstOrNull { it.directory?.canonicalFile==destination.canonicalFile }
-        if(storage!=null) {
-            if(volume==null)throw StorageUnavailable("STORAGE_UNAVAILABLE")
-            storage.root(volume.id,true)
-        }
-        val maximum=if(volume!=null && volume.id!=INTERNAL_STORAGE)storage!!.limit(volume.id) else limit
+        val volume=storage?.writableVolume(destination)
+        val maximum=if(volume!=null && volume.id!=INTERNAL_STORAGE)storage!!.limit(volume) else limit
         writeCharged(destination,maximum,count){output.write(bytes,0,count)}
     }
     @Synchronized fun writeCache(storageId:String,count:Int,write:()->Unit) {
         val volumes=checkNotNull(storage)
-        val destination=volumes.root(storageId,true)
-        val maximum=if(storageId==INTERNAL_STORAGE)limit else volumes.limit(storageId)
+        val observed=volumes.writableVolume(storageId)
+        val destination=checkNotNull(observed.directory)
+        val maximum=if(storageId==INTERNAL_STORAGE)limit else volumes.limit(observed)
         writeCharged(destination,maximum,count,write)
     }
 }

@@ -443,7 +443,7 @@ internal class PreparedLibrary(
                                     check(store.storage.usedBytes(target)+track.bytes<=store.storage.limit(target) && store.storage.volume(target).freeBytes-track.bytes>=FREE_RESERVE) { "NO_SPACE" }
                                     var copied=0L
                                     sourceFile.inputStream().use { input -> FileOutputStream(temporary).use { output ->
-                                        val buffer=ByteArray(128*1024);var lastReport=0L
+                                        val buffer=ByteArray(4*1024*1024);var lastReport=0L
                                         while(true) {
                                             checkMigrationCancellation();val count=input.read(buffer);if(count<0)break
                                             check(copied+count<=track.bytes) { "SOURCE_CHANGED" }

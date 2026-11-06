@@ -1,5 +1,7 @@
 # Семейная медиатека и microSD — 2026-11-06
 
+Дополнение после подключения реальной карты: [приёмка microSD](MicroSD.md).
+
 Ветка `codex/family-library-sd` от `b56063af177515dccd1e65b1ea312dedffd5ff17`
 (`codex/playlist-storage-order`, Draft PR #17). Отдельное задание владельца после HOME BETA.
 Обычный debug, без Merge, reboot, форматирования, системных изменений или platform signing.

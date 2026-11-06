@@ -123,7 +123,7 @@ class PreparedStorageTest {
         assertTrue(store.verify(entry));assertTrue(store.storage.retained().isEmpty())
     }
     @Test fun failedCopyKeepsOriginalAndDoesNotPublishTarget() = runTest {
-        val f=fixture();val store=f.store();val entry=ready(store,text="x".repeat(300_000));val library=library(store,this)
+        val f=fixture();val store=f.store();val entry=ready(store,text="x".repeat(9*1024*1024));val library=library(store,this)
         f.intercept={ if(f.card.listFiles().orEmpty().any { it.name.endsWith(".copying") && it.length()>0 }) f.writable=false }
         library.migrateStorage(cardId,0,command("migrate"));advanceUntilIdle()
         assertEquals("ERROR",store.storage.migration().status);assertEquals("STORAGE_READ_ONLY",store.storage.migration().error)
@@ -150,7 +150,7 @@ class PreparedStorageTest {
         assertEquals("COMPLETE",store.storage.migration().status)
     }
     @Test fun cancellationDuringCopyRemovesOnlyNewStagingAndKeepsSource() = runTest {
-        val f=fixture();val store=f.store();val entry=ready(store,text="x".repeat(300_000));val library=library(store,this)
+        val f=fixture();val store=f.store();val entry=ready(store,text="x".repeat(9*1024*1024));val library=library(store,this)
         var cancelled=false
         f.intercept={
             if(!cancelled && f.card.listFiles().orEmpty().any { it.name.endsWith(".copying") && it.length()>0 }) {
@@ -240,6 +240,33 @@ class PreparedStorageTest {
         }
         assertEquals(3L,target.length());assertEquals(0L,store.storage.usedBytes(INTERNAL_STORAGE))
     }
+    @Test fun eachMediaOrCacheWriteUsesOneFreshExternalVolumeSnapshot() {
+        val f=fixture();val store=f.store();store.storage.select(cardId,0);store.claim(video)
+        val target=store.track(video);val budget=MediaBudget(f.inside,storage=store.storage)
+        var observations=0;f.intercept={observations++}
+        FileOutputStream(target).use { out->
+            budget.write(out,byteArrayOf(1,2),2,target);assertEquals(1,observations)
+            budget.writeCache(cardId,2){out.write(byteArrayOf(3,4))};assertEquals(2,observations)
+        }
+        assertEquals(4L,target.length())
+    }
+    @Test fun nextWriteImmediatelyHonoursReadonlyRemovalAndCapacityChanges() {
+        val f=fixture();val store=f.store();store.storage.select(cardId,0);store.claim(video)
+        val target=store.track(video);val budget=MediaBudget(f.inside,storage=store.storage)
+        FileOutputStream(target).use { out->
+            budget.write(out,byteArrayOf(1,2),2,target)
+            f.writable=false
+            assertEquals("STORAGE_READ_ONLY",assertThrows(StorageUnavailable::class.java){budget.write(out,byteArrayOf(3),1,target)}.code)
+            assertEquals("STORAGE_READ_ONLY",assertThrows(StorageUnavailable::class.java){budget.writeCache(cardId,1){out.write(3)}}.code)
+            f.writable=true;f.mounted=false
+            assertEquals("STORAGE_UNAVAILABLE",assertThrows(StorageUnavailable::class.java){budget.write(out,byteArrayOf(3),1,target)}.code)
+            assertEquals("STORAGE_UNAVAILABLE",assertThrows(StorageUnavailable::class.java){budget.writeCache(cardId,1){out.write(3)}}.code)
+            f.mounted=true;f.total=FREE_RESERVE+2
+            assertEquals("NO_SPACE",assertThrows(IllegalStateException::class.java){budget.write(out,byteArrayOf(3),1,target)}.message)
+            assertEquals("NO_SPACE",assertThrows(IllegalStateException::class.java){budget.writeCache(cardId,1){out.write(3)}}.message)
+            assertEquals(2L,target.length())
+        }
+    }
     @Test fun untrustedVolumePathsAndSymlinksCannotEscapeAppStorage() {
         val f=fixture();val store=f.store()
         assertThrows(IllegalArgumentException::class.java) { store.storage.select("../../elsewhere",0) }
@@ -251,6 +278,27 @@ class PreparedStorageTest {
         assertEquals("keep",outside.readText())
         assertThrows(IllegalStateException::class.java) { store.storage.select(cardId,999) }
         assertEquals(INTERNAL_STORAGE,store.storage.selectedId())
+    }
+    @Test fun cacheBytesCountNestedSpansAndIgnoreSymlinkTargetsOutsideCache() {
+        val f=fixture();val store=f.store()
+        val cache=File(f.card,"stream-cache").apply {mkdir()}
+        val spans=File(cache,"0").apply {mkdir()}
+        File(spans,"span.v3.exo").writeBytes(ByteArray(4096))
+        File(cache,"index-data").writeBytes(ByteArray(17))
+        File(f.card,"local.video.mp4").writeBytes(ByteArray(100))
+        val outside=temporary.newFile("outside-cache").apply {writeBytes(ByteArray(9000))}
+        val link=File(spans,"external.v3.exo").toPath()
+        java.nio.file.Files.createSymbolicLink(link,outside.toPath())
+        try {
+            assertEquals(4213L,PreparedStorage.mediaBytes(f.card))
+            assertEquals(4213L,store.storage.usedBytes(cardId))
+            assertEquals(9000L,outside.length())
+        }finally {java.nio.file.Files.delete(link)}
+        val otherRoot=temporary.newFolder("cache-link-root")
+        val directoryLink=File(otherRoot,"stream-cache").toPath()
+        java.nio.file.Files.createSymbolicLink(directoryLink,cache.toPath())
+        try {assertEquals(0L,PreparedStorage.mediaBytes(otherRoot))}
+        finally {java.nio.file.Files.delete(directoryLink)}
     }
     @Test fun corruptRoutingJournalFailsClosedWithoutDeletingExistingMedia() {
         val f=fixture();val store=f.store();val entry=ready(store)

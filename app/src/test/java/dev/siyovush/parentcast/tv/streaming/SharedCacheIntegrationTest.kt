@@ -255,5 +255,19 @@ class SharedCacheIntegrationTest {
             assertEquals("existing video",keep.readText())
         }
     }
+    @Test fun realSimpleCacheSpansCountAgainstStorageQuotaBeforeReady()=runBlocking {
+        Fixture().use { f->
+            f.start();f.read(0,20)
+            val cached=f.streaming.state(id)!!.downloadedBytes
+            assertEquals(StreamingLibrary.BLOCK,cached)
+            assertFalse(f.store.track(id).exists())
+            assertTrue(PreparedStorage.mediaBytes(f.root)>=cached)
+            assertTrue(f.store.storage.usedBytes(INTERNAL_STORAGE)>=cached)
+            val budget=MediaBudget(f.root,limit=cached,storage=f.store.storage)
+            var wrote=false
+            assertEquals("NO_SPACE",assertThrows(IllegalStateException::class.java){budget.writeCache(INTERNAL_STORAGE,1){wrote=true}}.message)
+            assertFalse(wrote);assertEquals(cached,f.streaming.state(id)!!.downloadedBytes)
+        }
+    }
     private fun trueLimit()=20_000_000L
 }

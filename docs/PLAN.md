@@ -1,12 +1,18 @@
 # План реализации
 
-Текущая задача: `tasks/Family-playback-experience.md`, реализована. VK stream+save,
+Текущая задача: реальная microSD, `tasks/MicroSD-acceptance.md`, завершена.
+21 видео / 42 дорожки перенесены, локальный просмотр и итоговая сверка PASS.
+Результаты: `docs/reports/MicroSD.md`.
+Без очистки внутренних оригиналов, Merge или reboot.
+
+Предыдущее задание: `tasks/Family-playback-experience.md`, реализовано. VK stream+save,
 веб-пульт и детский экран H728 проверены; YouTube preview завершился тайм-аутом, ранний
-просмотр YouTube не подтверждён; физическая microSD/reboot NOT_RUN. Отдельная ветка от
+просмотр YouTube не подтверждён; microSD принята отдельно, извлечение/reboot NOT_RUN. Ветка от
 PR #18, без Merge. Результаты: `docs/reports/Family-playback-experience.md`.
 
 Предыдущее задание 06.11.2026: семейная медиатека и microSD реализованы;
-веб-пульт/обычное обновление H728 проверены, физическая microSD — NOT_RUN до подключения.
+веб-пульт/обычное обновление H728 проверены; последующая приёмка реальной microSD — PASS,
+см. `docs/reports/MicroSD.md`.
 `tasks/Family-library-sd.md`, результаты `docs/reports/Family-library-sd.md`.
 Отдельный одобренный scope после HOME BETA, stacked от PR #17, без Merge и системных изменений.
 
