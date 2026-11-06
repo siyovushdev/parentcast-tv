@@ -33,11 +33,12 @@ class OnlineVideoApiTest {
         val coordinator:PlaybackCoordinator
         val journal=java.io.File(tmp.root,"online-${java.util.UUID.randomUUID()}.json")
         var starts=0
+        var onlineStarts=0
         var behavior:suspend ()->Unit={}
         init {store.write(QueueState.Empty);coordinator=PlaybackCoordinator(object:YouTubeSource{override suspend fun resolve(videoId:String):ResolvedVideo=throw CancellationException()},store,player,scope);coordinator.start()}
         fun api()=OnlineVideoApi(coordinator,dispatcher,scope,journal,{videoId->JSONObject().put("videoId",videoId).put("title","A <script>name</script>").put("durationSeconds",20)
             .put("qualities",JSONArray().put(JSONObject().put("id",quality).put("height",720).put("sizeBytes",12345)))},
-            {_,_,_,_,_->starts++;behavior()},{true})
+            {_,_,_,_,_->starts++;behavior()},{true},startOnline={_,_->onlineStarts++;behavior()})
         fun preview(api:OnlineVideoApi):String {
             val response=api.mutate("/api/video/preview","owner",JSONObject().put("url","https://youtu.be/$id"),"preview-key","preview-fingerprint")
             assertEquals(202,response.code);val previewId=JSONObject(response.body).getJSONObject("preview").getString("previewId")
@@ -100,4 +101,27 @@ class OnlineVideoApiTest {
             assertEquals(0,f.starts);assertEquals(listOf("aqz-KE-bpKQ"),f.coordinator.currentSnapshot().queueState.items.map{it.videoId})
         }finally{f.close()}
     }
+    @Test fun onlineNeedsNoStorageAndReplayAfterStopNeverRestartsIt(){
+        val f=Fixture();try {
+            val api=f.api();val body=f.body(f.preview(api),"WATCH_ONLINE").apply {remove("storageId");remove("storageVersion")}
+            val result=api.mutate("/api/video/apply","owner",body,"online-key","online-fingerprint")
+            assertEquals(200,result.code);assertEquals("ONLINE",JSONObject(result.body).getString("mode"))
+            assertEquals("PLAYING",JSONObject(result.body).getString("stage"));assertEquals(0,f.starts);assertEquals(1,f.onlineStarts)
+            f.coordinator.stop();val version=f.coordinator.currentSnapshot().queueState.version
+            assertEquals(200,f.api().mutate("/api/video/apply","owner",body,"online-key","online-fingerprint").code)
+            assertEquals(1,f.onlineStarts);assertEquals(0,f.starts);assertEquals(version,f.coordinator.currentSnapshot().queueState.version)
+            assertEquals(PlaybackIntent.STOP,f.coordinator.currentSnapshot().queueState.intent)
+        }finally{f.close()}
+    }
+    @Test fun concurrentStopDuringOnlineResolutionPreventsDelayedPlay(){
+        val f=Fixture();try {
+            val api=f.api();val body=f.body(f.preview(api),"WATCH_ONLINE")
+            f.behavior={f.dispatcher.call {f.coordinator.stop()}}
+            val response=api.mutate("/api/video/apply","owner",body,"online-stop-key","online-stop-fingerprint")
+            assertEquals(200,response.code);assertEquals("PLAYBACK_CHANGED",JSONObject(response.body).getString("error"))
+            assertEquals(1,f.onlineStarts);assertEquals(0,f.starts);assertEquals(0,f.player.plays)
+            assertEquals(PlaybackIntent.STOP,f.coordinator.currentSnapshot().queueState.intent)
+        }finally{f.close()}
+    }
+
 }

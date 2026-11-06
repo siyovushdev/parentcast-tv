@@ -24,6 +24,7 @@ internal class OnlineVideoApi(
     private val displayReady:()->Boolean,
     private val remember:(String,JSONObject)->Unit = {_,_->},
     private val now:()->Long = System::currentTimeMillis,
+    private val startOnline:suspend (String,String)->Unit = {_,_->error("ONLINE_UNAVAILABLE")},
 ) {
     private data class Preview(val id:String,val owner:String,val videoId:String,val created:Long,
         var status:String="LOADING",var data:JSONObject?=null,var error:String?=null,var job:Job?=null)
@@ -92,18 +93,18 @@ internal class OnlineVideoApi(
         if(record==null){
             val p=synchronized(this){previews[json.getString("previewId")]?.takeIf {it.owner==owner && it.status=="COMPLETE" && now()-it.created<900_000}}
                 ?: return error(409,"PREVIEW_EXPIRED")
-            val action=json.getString("action");require(action in setOf("ADD","DOWNLOAD_LATER","WATCH_SAVE"))
+            val action=json.getString("action");require(action in setOf("ADD","DOWNLOAD_LATER","WATCH_SAVE","WATCH_ONLINE"))
             val version=integer(json,"queueVersion");require(version>=0)
             val quality=if(action=="ADD")"" else json.getString("qualityId")
             if(action!="ADD")require(p.data!!.getJSONArray("qualities").let {a->(0 until a.length()).any {a.getJSONObject(it).getString("id")==quality}})
-            if(action=="WATCH_SAVE" && !displayReady())return error(409,"OPEN_PLAYER_ON_TV")
+            if(action in setOf("WATCH_SAVE","WATCH_ONLINE") && !displayReady())return error(409,"OPEN_PLAYER_ON_TV")
             val groupId=json.optString("groupId").takeIf {it.isNotBlank() && it!="null"}
             val groupName=json.optString("groupName").takeIf {it.isNotBlank()}
             require(groupId==null || groupName==null)
             record=JSONObject().put("key",key).put("fingerprint",fingerprint).put("owner",owner).put("videoId",p.videoId)
                 .put("title",p.data!!.optString("title")).put("action",action).put("qualityId",quality).put("expectedVersion",version)
-                .put("storageId",if(action=="ADD")"" else json.getString("storageId"))
-                .put("storageVersion",if(action=="ADD")0 else integer(json,"storageVersion"))
+                .put("storageId",if(action in setOf("ADD","WATCH_ONLINE"))"" else json.getString("storageId"))
+                .put("storageVersion",if(action in setOf("ADD","WATCH_ONLINE"))0 else integer(json,"storageVersion"))
                 .put("groupId",groupId ?: JSONObject.NULL).put("groupName",groupName ?: JSONObject.NULL)
                 .put("created",now()).put("addedVersion",-1).put("done",false)
             saveRecord(record)
@@ -133,15 +134,18 @@ internal class OnlineVideoApi(
             command.put("addedVersion",response.second).put("groupId",response.third ?: JSONObject.NULL).put("stage","SAVED");saveRecord(command)
         }
         if(action!="ADD")try {
-            runBlocking(Dispatchers.IO){startSaving(videoId,command.getString("qualityId"),command.getString("storageId"),command.getLong("storageVersion"),action=="WATCH_SAVE")}
-            command.put("stage","PREPARING")
+            runBlocking(Dispatchers.IO){
+                if(action=="WATCH_ONLINE")startOnline(videoId,command.getString("qualityId"))
+                else startSaving(videoId,command.getString("qualityId"),command.getString("storageId"),command.getLong("storageVersion"),action=="WATCH_SAVE")
+            }
+            command.put("stage",if(action=="WATCH_ONLINE")"ONLINE_READY" else "PREPARING")
         }catch(e:Exception){
             // Queue commit is real and visible. A retry with the same command resumes preparation.
             command.put("error",safeCode(e,"PREPARATION_FAILED"));saveRecord(command)
             return ApiResponse(503,resultJson(command).toString())
         }
         command.remove("error")
-        if(action=="WATCH_SAVE"){
+        if(action in setOf("WATCH_SAVE","WATCH_ONLINE")){
             val selected=dispatcher.call {
                 val q=coordinator.currentSnapshot().queueState
                 val item=q.items.find {it.videoId==videoId} ?: return@call BatchAddResult.CONFLICT
@@ -169,7 +173,7 @@ internal class OnlineVideoApi(
     }
     private fun resultJson(r:JSONObject)=JSONObject().put("videoId",r.getString("videoId")).put("groupId",r.opt("groupId") ?: JSONObject.NULL)
         .put("queueVersion",dispatcher.call {coordinator.currentSnapshot().queueState.version}).put("stage",r.optString("stage","SAVED"))
-        .put("error",r.opt("error") ?: JSONObject.NULL)
+        .put("error",r.opt("error") ?: JSONObject.NULL).put("mode",if(r.optString("action")=="WATCH_ONLINE")"ONLINE" else if(r.optString("action")=="ADD")"ADD" else "STREAM_SAVE")
     private fun result(r:JSONObject,replay:Boolean)=ApiResponse(200,resultJson(r).put("replayed",replay).toString())
     private fun batchError(result:BatchAddResult)=when(result){
         BatchAddResult.CONFLICT->error(409,"QUEUE_VERSION_CONFLICT")

@@ -44,6 +44,14 @@ internal class PreparedLibrary(
     @Volatile private var migrationCancelRequested=false
     @Volatile private var active: Job? = null
     @Volatile private var activeId: String? = null
+    @Volatile internal var onlinePriority=false
+        private set
+    /** Transient bandwidth priority; never changes the parent's saved preparation settings. */
+    fun setOnlinePriority(value:Boolean) {
+        if(onlinePriority==value)return
+        synchronized(lock) {onlinePriority=value;if(value)active?.cancel()}
+        if(!value && snapshot().let {it.enabled && !it.paused})wakeService()
+    }
     @Volatile private var queueReferences: Set<String>? = null
     private var recoveryScheduled=false
     init { if(!File(store.directory,"streaming-plans.json").isFile)resumeDeletionRecovery() }
@@ -186,14 +194,14 @@ internal class PreparedLibrary(
         update { it.copy(entries = it.entries - removable) }; persist(); return removable.size
         } finally { if(admitted)synchronized(lock) { storageBusy=false };worker.unlock() }
     }
-    fun hasPending(): Boolean = !synchronized(lock) { storageBusy } && snapshot().let { s -> s.enabled && !s.paused && !s.storageError && s.deleting.isEmpty() && s.plan.any { s.entries[it]?.status in setOf(PreparationStatus.WAITING, PreparationStatus.RETRY_WAIT) } }
+    fun hasPending(): Boolean = !onlinePriority && !synchronized(lock) { storageBusy } && snapshot().let { s -> s.enabled && !s.paused && !s.storageError && s.deleting.isEmpty() && s.plan.any { s.entries[it]?.status in setOf(PreparationStatus.WAITING, PreparationStatus.RETRY_WAIT) } }
     suspend fun runWorker() = worker.withLock {
         active = currentCoroutineContext()[Job]
         try {
             while (true) {
                 currentCoroutineContext().ensureActive()
                 val s = snapshot()
-                if (!s.enabled || s.paused || s.storageError || s.deleting.isNotEmpty() || synchronized(lock) { storageBusy }) break
+                if (onlinePriority || !s.enabled || s.paused || s.storageError || s.deleting.isNotEmpty() || synchronized(lock) { storageBusy }) break
                 // Finish/recover the earliest pending programme item before starting a later large file.
                 val firstPending=s.plan.firstOrNull { id -> id !in synchronized(lock) { streamingReservations.toSet() } && s.entries[id]?.let { !it.local && it.status in setOf(PreparationStatus.WAITING,PreparationStatus.RETRY_WAIT) }==true }
                 val id=firstPending?.takeIf { s.entries.getValue(it).let { e -> e.status==PreparationStatus.WAITING || e.retryAtMs<=now() } }

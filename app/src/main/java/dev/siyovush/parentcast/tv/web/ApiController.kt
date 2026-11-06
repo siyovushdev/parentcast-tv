@@ -376,7 +376,7 @@ internal class ApiController(
                 JSONObject()
                     .put("queueItemId", item.queueItemId)
                     .put("durationSeconds",mediaDuration(item.videoId) ?: JSONObject.NULL).put("videoId", item.videoId).put("local",item.local).put("title",mediaTitle(item.videoId).ifBlank { item.title })
-                    .put("preparationStatus",readiness ?: JSONObject.NULL).put("ready",readiness=="READY").put("canStream",prepared?.canStream(item.videoId,storage)==true),
+                    .put("online",prepared?.online(item.videoId)==true).put("preparationStatus",readiness ?: JSONObject.NULL).put("ready",readiness=="READY").put("canStream",prepared?.canStream(item.videoId,storage)==true),
             )
         }
         val error = snapshot.error?.let { failure ->

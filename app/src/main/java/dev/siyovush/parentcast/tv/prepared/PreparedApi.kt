@@ -7,12 +7,13 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal class PreparedApi(private val library: PreparedLibrary, private val coordinator: PlaybackCoordinator, private val dispatcher: CallDispatcher, private val metadataDuration: (String) -> Long? = { null }) {
+internal class PreparedApi(private val library: PreparedLibrary, private val coordinator: PlaybackCoordinator, private val dispatcher: CallDispatcher, private val metadataDuration: (String) -> Long? = { null }, private val onlineAvailable:(String)->Boolean={false}) {
     val uploadLimit:Long get() = EXTERNAL_LIBRARY_LIMIT
+    fun online(id:String)=onlineAvailable(id)
     fun storageAvailability()=library.storageAvailability()
     fun readiness(id: String,view:StorageAvailability?=null): String = library.mediaReadiness(id,view)
-    fun canStream(id:String,view:StorageAvailability?=null)=library.streaming?.canPlayDuringDownload(id,view)==true
-    fun canPlay(id: String): Boolean = readiness(id) == "READY" || library.streaming?.canPlayDuringDownload(id)==true ||
+    fun canStream(id:String,view:StorageAvailability?=null)=onlineAvailable(id) || library.streaming?.canPlayDuringDownload(id,view)==true
+    fun canPlay(id: String): Boolean = onlineAvailable(id) || readiness(id) == "READY" || library.streaming?.canPlayDuringDownload(id)==true ||
         (readiness(id)!="STORAGE_BUSY" && readiness(id)!="STORAGE_UNAVAILABLE" && !library.snapshot().enabled && !id.startsWith("local_") && !dev.siyovush.parentcast.tv.media.OnlineMediaIds.isVk(id))
     fun state(view:StorageAvailability=storageAvailability()): JSONObject {
         val s = library.snapshot(); val entries = JSONArray()
@@ -39,7 +40,7 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
         val storage = library.storageStats(view);val limit=library.storageLimit(view)
         return JSONObject().put("files", files).put("clearing", s.deleting.isNotEmpty()).put("operationError", s.operationError).put("usedBytes", storage.first).put("freeBytes", storage.second)
             .put("additionalBytes", minOf((limit - storage.first).coerceAtLeast(0), (storage.second - FREE_RESERVE).coerceAtLeast(0)))
-            .put("targetGroupId",s.targetGroupId ?: JSONObject.NULL).put("enabled", s.enabled).put("paused", s.paused).put("storageError", s.storageError)
+            .put("onlinePriority",library.onlinePriority).put("targetGroupId",s.targetGroupId ?: JSONObject.NULL).put("enabled", s.enabled).put("paused", s.paused).put("storageError", s.storageError)
             .put("ready", s.plan.count { readiness(it,view)=="READY" }).put("count", s.plan.size)
             .put("limitBytes", limit).put("reserveBytes", FREE_RESERVE).put("entries", entries)
     }

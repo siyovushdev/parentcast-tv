@@ -61,6 +61,8 @@ internal class StreamingLibrary(
         }catch(_:Exception){corrupt=true}
         library.installStreaming(this)
     }
+    suspend fun playbackPreview(videoId:String,refresh:Boolean=false):VideoPreview =
+        if(!refresh)previews[videoId]?.takeIf { System.currentTimeMillis()-it.first<300_000 }?.second ?: preview(videoId) else preview(videoId)
     suspend fun preview(videoId:String):VideoPreview {
         require(OnlineMediaIds.isOnline(videoId))
         return catalog.preview(videoId).also { p -> if(previews.size>=64)previews.clear();previews[videoId]=System.currentTimeMillis() to p }
