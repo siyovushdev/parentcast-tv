@@ -1,16 +1,17 @@
 // Synthetic DOM: group identity, readiness, safe names and explicit commands. Not hardware playback.
 import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';import {webcrypto} from 'node:crypto';
 const elements=new Map();
-const element=tag=>({tagName:tag,children:[],dataset:{},handlers:{},textContent:'',value:'',hidden:false,disabled:false,
+const element=tag=>({tagName:tag,children:[],dataset:{},style:{},handlers:{},textContent:'',value:'',hidden:false,disabled:false,
  setAttribute(k,v){this[k]=v},append(...nodes){this.children.push(...nodes)},replaceChildren(){this.children=[]},addEventListener(k,f){(this.handlers[k]??=[]).push(f)},
  querySelectorAll(selector){const all=this.children.flatMap(n=>[n,...(n.querySelectorAll?.(selector)||[])]);return all.filter(n=>selector.includes('watch-video')?n.dataset.groupAction==='watch-video':true)}});
 const document={getElementById(id){if(!elements.has(id))elements.set(id,element('div'));return elements.get(id)},createElement:element,querySelectorAll:()=>[]};
 const ctx=vm.createContext({document,localStorage:{getItem:()=>null,setItem(){},removeItem(){}},crypto:webcrypto,setInterval(){},setTimeout(){},clearTimeout(){},confirm:()=>false});
 for(const name of ['app','media','groups'])vm.runInContext(fs.readFileSync(`app/src/main/assets/web/${name}.js`,'utf8'),ctx);
 vm.runInContext(`state={groups:[{id:'group-one',name:'<script>Название</script>',source:'YOUTUBE_PLAYLIST',videoIds:['video000001','video000002']},{id:'group-two',name:'VK',source:'VK_PLAYLIST',videoIds:['video000001']}],items:[{queueItemId:'a',videoId:'video000001',title:'Готовый',ready:true},{queueItemId:'b',videoId:'video000002',title:'Следующий',ready:false}],currentIndex:0,activeGroupId:'group-one',queueVersion:7,prepared:{enabled:true,files:[{videoId:'video000001'}],entries:[{videoId:'video000002',status:'DOWNLOADING',percent:20}]}};var sent=[];perform=async(key,path,payload)=>{sent.push({path,payload});return {}};renderQueue()`,ctx);
-const cards=elements.get('queue').children;assert.equal(cards.length,2);assert(cards[0].children[0].children[0].textContent.includes('<script>'));assert(!('innerHTML' in cards[0]));
-const rows=cards[0].children.filter(n=>n.className?.startsWith('queue-item'));assert.equal(rows[0].children[1].textContent,'Смотреть');assert.equal(rows[1].children[1].disabled,true);assert.equal(rows[1].children[1].textContent,'Загружается · 20%');
-vm.runInContext('state.prepared.entries[0].percent=55;renderQueue()',ctx);assert.equal(elements.get('queue').children[0],cards[0],'Progress polling preserves card DOM/focus');assert.equal(rows[1].children[1].textContent,'Загружается · 55%');
+const cards=elements.get('queue').children[0].children;assert.equal(cards.length,2);assert(cards[0].children[1].textContent.includes('<script>'));assert(!('innerHTML' in cards[0]));
+vm.runInContext("libraryGroupId='group-one';programmeViewKey=null;renderQueue()",ctx);
+const rows=elements.get('queue').children.filter(n=>n.className?.startsWith('queue-item'));assert.equal(rows[0].children[1].textContent,'Смотреть');assert.equal(rows[1].children[1].disabled,true);assert.equal(rows[1].children[1].textContent,'Загружается · 20%');
+vm.runInContext('state.prepared.entries[0].percent=55;renderQueue()',ctx);assert.equal(elements.get('queue').children.filter(n=>n.className?.startsWith('queue-item'))[0],rows[0],'Progress polling preserves episode DOM/focus');assert.equal(rows[1].children[1].textContent,'Загружается · 55%');
 await vm.runInContext(`programmeAction({dataset:{groupAction:'watch-video',groupId:'group-one',itemId:'b'}})`,ctx);assert.equal(vm.runInContext('sent.length',ctx),0,'Unready video must not issue PLAY');
 await vm.runInContext(`programmeAction({dataset:{groupAction:'prepare',groupId:'group-two'}})`,ctx);
 let request=JSON.parse(vm.runInContext('JSON.stringify(sent.at(-1))',ctx));assert.equal(request.path,'/api/prepared');assert.equal(request.payload.groupId,'group-two');assert.equal(request.payload.action,'ENABLE');
@@ -21,7 +22,7 @@ request=JSON.parse(vm.runInContext('JSON.stringify(sent.at(-1))',ctx));assert.eq
 vm.runInContext('startQueueOrder("group-one");moveDraft("b",0);byId("queueSortMode").value="ready";sortDraft()',ctx);assert.equal(vm.runInContext('queueOrder.ids[0]',ctx),'a','Readiness sorting includes cached files outside the current download plan');vm.runInContext('moveDraft("b",0)',ctx);await vm.runInContext('applyQueueOrder()',ctx);
 request=JSON.parse(vm.runInContext('JSON.stringify(sent.at(-1))',ctx));assert.equal(request.path,'/api/queue/group-order');assert.deepEqual(request.payload.videoIds,['video000002','video000001']);assert.equal(request.payload.groupId,'group-one');
 vm.runInContext('state.positionMs=42000;state.finished=false;programmeViewKey=null;renderQueue()',ctx);
-const resumedRows=elements.get('queue').children[0].children.filter(n=>n.className?.startsWith('queue-item'));
+const resumedRows=elements.get('queue').children.filter(n=>n.className?.startsWith('queue-item'));
 assert.equal(resumedRows[0].children[1].textContent,'Продолжить с 0:42');
 await vm.runInContext(`programmeAction({dataset:{groupAction:'watch-video',groupId:'group-one',itemId:'a'}})`,ctx);
 request=JSON.parse(vm.runInContext('JSON.stringify(sent.at(-1))',ctx));assert.equal(request.path,'/api/playback');assert.equal(request.payload.action,'PLAY');assert.equal(request.payload.positionMs,undefined);

@@ -3,8 +3,8 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="dark">
-    <title>ParentCast TV — родительский пульт</title>
+    <meta name="color-scheme" content="light dark">
+    <title>ParentCast — семейный пульт</title>
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -199,7 +199,7 @@
                         <button id="playlistApplyButton" disabled>Добавить выбранные</button>
                             <label>Название сохранённой подборки <input id="collectionName" autocomplete="off" maxlength="100" placeholder="Например, вечерняя программа"></label>
                             <button id="collectionSaveButton" class="secondary" disabled>Сохранить выбранные как подборку</button>
-                            <p class="muted small">Сохраняется фиксированный список videoId в указанном порядке на приставке. Новые видео автора не добавятся. Сохранение не меняет очередь.</p>
+                            <p id="collectionSnapshotNote" class="muted small">Сохраняется фиксированный список видео в указанном порядке на приставке. Новые видео автора не добавятся. Сохранение подборки не меняет очередь.</p>
                         </div>
                     </div>
                     <button type="button" class="secondary section-close" data-section-close>Свернуть блок ↑</button>

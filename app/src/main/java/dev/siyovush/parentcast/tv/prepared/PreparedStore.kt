@@ -28,14 +28,22 @@ internal data class PreparationState(
     val targetGroupId: String? = null,
     val deleting: List<String> = emptyList(), val operationError: String = "",
 )
-internal class PreparedStore(val directory: File) {
+internal class PreparedStore(val directory: File, storageProvider: (() -> List<MediaVolume>)? = null, internalLimit: Long = LIBRARY_LIMIT) {
     private val index = File(directory, "index.json")
     init { directory.mkdirs() }
-    fun track(id: String, audio: Boolean = false) = File(directory, "$id.${if (audio) "audio" else "video"}.mp4").also {
-        require(MEDIA_ID.matches(id))
+    val storage = PreparedStorage(directory, storageProvider ?: { emptyList() }, internalLimit)
+    fun trackName(id:String,audio:Boolean=false) = "$id.${if(audio) "audio" else "video"}.mp4"
+    fun fileAt(id:String,name:String,storageId:String,write:Boolean=false) = PreparedStorage.safeFile(storage.root(storageId,write),PreparedStorage.physicalName(id,name,storageId!=INTERNAL_STORAGE))
+    fun file(id:String,name:String) = fileAt(id,name,storage.placement(id))
+    fun track(id: String, audio: Boolean = false):File {
+        val storageId=storage.placement(id)
+        // Downloaders also write partial/resume siblings; validate those before handing out a target.
+        PreparedStorage.files(storage.root(storageId),id,storageId!=INTERNAL_STORAGE)
+        return fileAt(id,trackName(id,audio),storageId)
     }
+    fun claim(id:String) = storage.claim(listOf(id))
     fun read(): PreparationState {
-        if (!index.exists()) return PreparationState()
+        if (!index.exists()) return PreparationState(storageError = !storage.healthy())
         return try {
             val root = JSONObject(index.readText())
             val plan = root.getJSONArray("plan").let { a -> List(a.length()) { a.getString(it).also { id -> require(VIDEO_ID.matches(id)) } } }
@@ -55,7 +63,7 @@ internal class PreparedStore(val directory: File) {
                         else entry
                     }
             } }
-            PreparationState(root.getBoolean("enabled"), root.optBoolean("paused"), plan, entries,
+            PreparationState(root.getBoolean("enabled"), root.optBoolean("paused"), plan, entries,storageError = !storage.healthy(),
                 targetGroupId = root.optString("targetGroupId").takeUnless { it.isBlank() || it=="null" },
                 deleting = root.optJSONArray("deleting")?.let { a -> List(a.length()) { a.getString(it).also { id -> require(MEDIA_ID.matches(id)) } } }.orEmpty(),
                 operationError = root.optString("operationError"))
@@ -75,20 +83,38 @@ internal class PreparedStore(val directory: File) {
         check(temporary.renameTo(index)) { "Preparation index write failed" }
     }
     fun verify(e: PreparedEntry, checkCancellation: () -> Unit = {}): Boolean = e.status == PreparationStatus.READY && e.tracks.isNotEmpty() && e.tracks.all { t ->
-        val f = File(directory, t.name)
+        val f = file(e.id,t.name)
         f.isFile && f.length() == t.bytes && sha256(f,checkCancellation) == t.sha256
     }
-    fun delete(id: String) { mediaFiles(id).forEach { it.delete() } }
-    private fun mediaFiles(id: String) = listOf(track(id), track(id, true)).flatMap { listOf(it, File(it.path + ".part"), File(it.path + ".resume.json"), File(it.path + ".resume.json.tmp")) }
-    fun retainedBytes(id: String): Long = listOf(track(id), track(id,true)).sumOf { if (it.isFile) it.length() else File(it.path+".part").length() }
+    fun delete(id: String) { deleteChecked(id) }
+    /** Failed network work must never dispose of a retained, verified original copy. */
+    fun discardDownload(id:String) { mediaFiles(id).forEach { file -> check(!file.exists() || file.delete()) { "DELETE_FAILED" } } }
+    private fun mediaFiles(id: String) = PreparedStorage.files(storage.rootFor(id,true),id,storage.placement(id)!=INTERNAL_STORAGE)
+    fun retainedBytes(id: String): Long = runCatching { listOf(track(id), track(id,true)).sumOf { if (it.isFile) it.length() else PreparedStorage.safeFile(it.parentFile!!,it.name+".part").length() } }.getOrDefault(0)
     fun mediaIds(): Set<String> = directory.listFiles().orEmpty().map { it.name }
-        .filter { it.matches(Regex(dev.siyovush.parentcast.tv.media.OnlineMediaIds.MEDIA_PATTERN + "[.](video|audio)[.]mp4([.]part)?")) }.map { it.substringBefore('.') }.toSet()
+        .filter { it.matches(Regex(dev.siyovush.parentcast.tv.media.OnlineMediaIds.MEDIA_PATTERN + "[.](video|audio)[.]mp4([.]part)?")) }.map { it.substringBefore('.') }.toSet() + storage.knownIds().filter { retainedBytes(it)>0 }
     fun deleteChecked(id: String) {
         mediaFiles(id).forEach { file ->
             check(!file.exists() || file.delete()) { "DELETE_FAILED" }
         }
+        storage.retained().filter { it.id==id }.forEach { original ->
+            PreparedStorage.files(storage.root(original.storageId,true),id,original.storageId!=INTERNAL_STORAGE).forEach { file -> check(!file.exists() || file.delete()) { "DELETE_FAILED" } }
+            storage.removeOriginal(original)
+        }
+        discardStaged(id)
     }
-    fun usedBytes(): Long = directory.listFiles().orEmpty().filter { it.name.endsWith(".mp4") || it.name.endsWith(".part") }.sumOf { it.length() }
+    fun discardStaged(id:String?=null,targetId:String?=null) {
+        storage.stagedCopies().filter { (id==null || it.id==id) && (targetId==null || it.storageId==targetId) }.forEach { copy ->
+            // Placement + stage removal are one journal commit. Never remove a committed active copy.
+            if(storage.placement(copy.id)!=copy.storageId) {
+                val file=fileAt(copy.id,copy.track.name,copy.storageId,true)
+                listOf(file,PreparedStorage.safeFile(file.parentFile!!,file.name+".copying")).forEach { check(!it.exists() || it.delete()) { "DELETE_FAILED" } }
+            }
+            storage.forgetStage(copy)
+        }
+    }
+    fun usedBytes(): Long = storage.usedBytes(storage.selectedId())
+    fun usedBytesFor(id:String):Long = storage.usedBytes(storage.placement(id))
 }
 internal fun sha256(file: File, checkCancellation: () -> Unit = {}): String = MessageDigest.getInstance("SHA-256").let { digest ->
     file.inputStream().use { input -> val buffer = ByteArray(128 * 1024); while (true) { checkCancellation(); val count = input.read(buffer); if (count < 0) break; digest.update(buffer, 0, count) } }

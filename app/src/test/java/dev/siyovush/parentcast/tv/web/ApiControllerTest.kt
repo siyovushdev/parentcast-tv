@@ -372,6 +372,59 @@ class ApiControllerTest {
         assertEquals(false, JSONObject(f.controller.stateBody()).getBoolean("displayReady"))
     }
 
+    @Test
+    fun storageRoutesKeepAuthenticationHostOriginCsrfAndRevocationGuards() {
+        val f = Fixture()
+        assertEquals(401, f.controller.handle(request("GET", "/api/storage", f.auth(null))).code)
+        val token = f.pair()
+        val before = f.controller.handle(request("GET", "/api/storage", f.auth(token)))
+        assertEquals(200, before.code)
+        val body = JSONObject().put("action", "SELECT").put("storageId", "internal")
+            .put("storageVersion", JSONObject(before.body).getLong("storageVersion"))
+            .put("idempotencyKey", "storage-guard-command").toString()
+        listOf(
+            (f.auth(token) + ("host" to "evil.invalid:8765")) to 421,
+            (f.auth(token) + ("origin" to "https://evil.invalid")) to 403,
+            (f.auth(token) + ("referer" to "https://evil.invalid/")) to 403,
+            (f.auth(token) - "x-parentcast-client") to 403,
+        ).forEach { (headers, code) ->
+            assertEquals(code, f.controller.handle(request("POST", "/api/storage", headers, body)).code)
+        }
+        assertEquals(401, f.controller.handle(request("POST", "/api/storage", f.auth(null), body)).code)
+        assertEquals(403, f.controller.handle(request("OPTIONS", "/api/storage", f.auth(token))).code)
+        val unchanged = JSONObject(f.controller.handle(request("GET", "/api/storage", f.auth(token))).body)
+        assertEquals(JSONObject(before.body).getLong("storageVersion"), unchanged.getLong("storageVersion"))
+        assertEquals(JSONObject(before.body).getString("selectedId"), unchanged.getString("selectedId"))
+        f.tokenStore.revoke(f.tokenStore.verify(token)!!.deviceId)
+        assertEquals(401, f.controller.handle(request("GET", "/api/storage", f.auth(token))).code)
+        assertEquals(401, f.controller.handle(request("POST", "/api/storage", f.auth(token), body)).code)
+    }
+
+    @Test
+    fun storageSelectionIsVersionedReplaySafeAndDoesNotChangeProgramme() {
+        val f = Fixture(); val token = f.pair()
+        f.add("https://youtu.be/jNQXAC9IVRw", "storage-before-add", token)
+        val programme = f.coordinator.currentSnapshot().queueState
+        val storage = JSONObject(f.controller.handle(request("GET", "/api/storage", f.auth(token))).body)
+        val version = storage.getLong("storageVersion")
+        val body = JSONObject().put("action", "SELECT").put("storageId", "internal")
+            .put("storageVersion", version).put("idempotencyKey", "storage-select-command")
+        fun post(j: JSONObject) = f.controller.handle(request("POST", "/api/storage", f.auth(token), j.toString()))
+        val first = post(body)
+        assertEquals(200, first.code)
+        assertEquals(first, post(body))
+        val reused = JSONObject(body.toString()).put("storageId", "../../files")
+        assertEquals("IDEMPOTENCY_KEY_REUSED", JSONObject(post(reused).body).getString("error"))
+        val stale = JSONObject(body.toString()).put("storageVersion", version).put("idempotencyKey", "storage-stale-command")
+        assertEquals(409, post(stale).code)
+        val after = JSONObject(f.controller.handle(request("GET", "/api/storage", f.auth(token))).body)
+        val invalid = JSONObject(body.toString()).put("storageId", "../../files").put("storageVersion", after.getLong("storageVersion"))
+            .put("idempotencyKey", "storage-invalid-path")
+        assertTrue(post(invalid).code in setOf(400, 409))
+        assertEquals(programme, f.coordinator.currentSnapshot().queueState)
+        assertTrue(f.tokenStore.verify(token) != null)
+    }
+
     private inner class Fixture(displayReady: Boolean = true) {
         val tokenFile = file("devices.json")
         val tokenStore = AtomicTokenStore(tokenFile)
@@ -422,6 +475,7 @@ class ApiControllerTest {
             security = RequestSecurity(setOf("192.168.68.121", "127.0.0.1"), 8765),
             assetLoader = { "<html></html>" },
             prepared = dev.siyovush.parentcast.tv.prepared.PreparedApi(library, coordinator, callDispatcher),
+            storage = dev.siyovush.parentcast.tv.prepared.StorageApi(library, coordinator, callDispatcher),
             displayReady = { displayReady },
         )
 

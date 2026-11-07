@@ -83,6 +83,122 @@ class PlaylistApiTest {
     }
 
     @Test
+    fun explicitOrderIsCommittedWithGroupAndDoesNotTouchExistingPlayback() = runTest {
+        val fixture = Fixture(this)
+        fixture.result = fixture.result.copy(entries = listOf(entry(1), entry(2), entry(3)))
+        val token = fixture.pair()
+        val id = fixture.preview(token)
+        runCurrent()
+        fixture.coordinator.add("video000099")
+        val before = fixture.coordinator.currentSnapshot().queueState
+
+        assertEquals(200, fixture.apply(token, id, listOf(2, 3, 1), version = before.version,
+            ordered = listOf(3, 1, 2)).code)
+
+        val after = fixture.coordinator.currentSnapshot().queueState
+        assertEquals(listOf("video000099", "video000003", "video000001", "video000002"), fixture.videoIds())
+        assertEquals(listOf("video000003", "video000001", "video000002"), after.groups.single().videoIds)
+        assertEquals(before.version + 1, after.version)
+        assertEquals(before.currentItem, after.currentItem)
+        assertEquals(before.intent, after.intent)
+        assertEquals(0, fixture.playerCalls)
+        fixture.close()
+    }
+
+    @Test
+    fun explicitOrderMustBeAnIntegerPermutationOfTheSelectableSelection() = runTest {
+        val fixture = Fixture(this)
+        fixture.result = fixture.result.copy(entries = listOf(entry(1), entry(2), entry(3, false)))
+        val token = fixture.pair()
+        val id = fixture.preview(token)
+        runCurrent()
+        val invalidOrders: List<Any> = listOf(
+            JSONArray(), JSONArray(listOf(1)), JSONArray(listOf(1, 1)),
+            JSONArray(listOf(1, 2, 3)), JSONArray(listOf(1, 3)), JSONArray(listOf(1, 4)),
+            JSONArray(listOf(0, 1)), JSONArray(listOf(-1, 2)),
+            JSONArray(listOf("2", 1)), JSONArray(listOf(2.5, 1)), JSONArray(listOf(true, 1)),
+            JSONArray(listOf(2_147_483_648L, 1)), JSONArray().put(JSONObject.NULL).put(1),
+            JSONObject.NULL, "2,1",
+        )
+        for (path in listOf("/api/playlists/apply", "/api/collections/save")) {
+            invalidOrders.forEach { order ->
+                val result = fixture.post(token, path, JSONObject().put("previewId", id)
+                    .put("indices", JSONArray(listOf(1, 2))).put("orderedIndices", order)
+                    .put("queueVersion", 0).put("name", "Тест"))
+                assertEquals("$path with $order", 400, result.code)
+            }
+            // Matching arrays still cannot select an unavailable entry.
+            assertEquals(400, fixture.post(token, path, JSONObject().put("previewId", id)
+                .put("indices", JSONArray(listOf(1, 3))).put("orderedIndices", JSONArray(listOf(3, 1)))
+                .put("queueVersion", 0).put("name", "Тест")).code)
+        }
+        assertTrue(fixture.videoIds().isEmpty())
+        assertTrue(fixture.coordinator.currentSnapshot().queueState.groups.isEmpty())
+        assertEquals(0, JSONObject(fixture.get(token, "/api/collections").body).getJSONArray("collections").length())
+        fixture.close()
+    }
+
+    @Test
+    fun orderedImportRetainsThe500ItemLimit() = runTest {
+        val fixture = Fixture(this)
+        fixture.result = fixture.result.copy(entries = (1..501).map { entry(it) })
+        val token = fixture.pair()
+        val id = fixture.preview(token)
+        runCurrent()
+        assertEquals(400, fixture.apply(token, id, (1..501).toList(), ordered = (501 downTo 1).toList()).code)
+        assertTrue(fixture.videoIds().isEmpty())
+        assertEquals(200, fixture.apply(token, id, (1..500).toList(), ordered = (500 downTo 1).toList()).code)
+        assertEquals((500 downTo 1).map { entry(it).videoId }, fixture.videoIds())
+        assertEquals(500, fixture.coordinator.currentSnapshot().queueState.groups.single().videoIds.size)
+        fixture.close()
+    }
+
+    @Test
+    fun orderedReplaySurvivesRestartAndRejectsAnotherOrderUnderTheSameKey() = runTest {
+        val fixture = Fixture(this)
+        val token = fixture.pair()
+        val id = fixture.preview(token)
+        runCurrent()
+        assertEquals(200, fixture.apply(token, id, listOf(1, 2), key = "ordered-replay", ordered = listOf(2, 1)).code)
+        fixture.close()
+        File(fixture.directory, "responses.json").delete()
+        val restarted = Fixture(this, fixture.directory)
+        assertEquals(200, restarted.apply(token, id, listOf(1, 2), key = "ordered-replay", ordered = listOf(2, 1)).code)
+        assertEquals(409, restarted.apply(token, id, listOf(1, 2), key = "ordered-replay", ordered = listOf(1, 2)).code)
+        assertEquals(listOf("video000002", "video000001"), restarted.videoIds())
+        assertEquals(1L, restarted.coordinator.currentSnapshot().queueState.version)
+        assertEquals(1, restarted.coordinator.currentSnapshot().queueState.groups.size)
+        restarted.close()
+    }
+
+    @Test
+    fun savedCollectionKeepsExplicitOrderAcrossRestartAndSourceChanges() = runTest {
+        val fixture = Fixture(this)
+        val token = fixture.pair()
+        val preview = fixture.preview(token)
+        runCurrent()
+        fun body(order: List<Int>) = JSONObject().put("previewId", preview)
+            .put("indices", JSONArray(listOf(1, 2))).put("orderedIndices", JSONArray(order)).put("name", "Вечер")
+        val saved = fixture.post(token, "/api/collections/save", body(listOf(2, 1)), "ordered-collection")
+        assertEquals(200, saved.code)
+        val collectionId = JSONObject(saved.body).getJSONObject("collection").getString("id")
+        assertTrue(fixture.videoIds().isEmpty())
+        fixture.close()
+        File(fixture.directory, "responses.json").delete()
+
+        val restarted = Fixture(this, fixture.directory)
+        restarted.result = restarted.result.copy(entries = listOf(entry(3), entry(1)))
+        assertEquals(200, restarted.post(token, "/api/collections/save", body(listOf(2, 1)), "ordered-collection").code)
+        assertEquals(409, restarted.post(token, "/api/collections/save", body(listOf(1, 2)), "ordered-collection").code)
+        assertEquals(200, restarted.post(token, "/api/collections/apply", JSONObject()
+            .put("collectionId", collectionId).put("queueVersion", 0)).code)
+        assertEquals(listOf("video000002", "video000001"), restarted.videoIds())
+        assertEquals(listOf("video000002", "video000001"), restarted.coordinator.currentSnapshot().queueState.groups.single().videoIds)
+        assertEquals(0, restarted.playerCalls)
+        restarted.close()
+    }
+
+    @Test
     fun partialPreviewPreservesWarningAndAllowsOnlyExplicitSelection() = runTest {
         val fixture = Fixture(this)
         fixture.result = fixture.result.copy(status = PlaylistStatus.PARTIAL, reason = "Страница 2 недоступна", reportedCount = 250)
@@ -122,10 +238,11 @@ class PlaylistApiTest {
         val id = fixture.preview(token)
         runCurrent()
         fixture.coordinator.add("video000099")
-        val response = fixture.apply(token, id, listOf(1), version = 0)
+        val response = fixture.apply(token, id, listOf(1, 2), version = 0, ordered = listOf(2, 1))
         assertEquals(409, response.code)
         assertEquals("QUEUE_VERSION_CONFLICT", JSONObject(response.body).getString("error"))
         assertEquals(listOf("video000099"), fixture.videoIds())
+        assertTrue(fixture.coordinator.currentSnapshot().queueState.groups.isEmpty())
         fixture.close()
     }
 
@@ -297,8 +414,9 @@ class PlaylistApiTest {
             assertEquals(202, response.code)
             return JSONObject(response.body).getString("previewId")
         }
-        fun apply(token: String, id: String, indices: List<Int>, version: Long = 0, key: String = "apply-command-${++sequence}") =
-            post(token, "/api/playlists/apply", JSONObject().put("previewId", id).put("indices", JSONArray(indices)).put("queueVersion", version), key)
+        fun apply(token: String, id: String, indices: List<Int>, version: Long = 0, key: String = "apply-command-${++sequence}", ordered: List<Int>? = null) =
+            post(token, "/api/playlists/apply", JSONObject().put("previewId", id).put("indices", JSONArray(indices)).put("queueVersion", version)
+                .apply { if (ordered != null) put("orderedIndices", JSONArray(ordered)) }, key)
         fun videoIds() = coordinator.currentSnapshot().queueState.items.map { it.videoId }
         fun close() { coordinator.close(); previews.close() }
     }

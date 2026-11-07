@@ -161,7 +161,7 @@ assert(elements.get("commandMessage").textContent.includes("уже есть в �
 console.log("PASS: repeated playlist/link clicks, busy controls, queued selection and accurate added/skipped messages (synthetic)");
 
 vm.runInContext("preview={previewId:'vk',provider:'VK',status:'COMPLETE',reportedCount:61,title:'VK',entries:[{index:1,videoId:'vk:-227392256_456239129',title:'<script>title</script>',durationSeconds:116,availability:'UNKNOWN',selectable:true}]}; selectedIndices=new Set([1]); state.items=[]; renderPreview()",context);
-assert(elements.get('playlistCount').textContent.includes('заявлено VK: 61'));
+assert(elements.get('playlistCount').textContent.includes('VK: получено 1 / 61'));
 assert(elements.get('playlistSelectedCount').textContent.includes('новых: 1'));
 vm.runInContext("state.items=[{videoId:'vk:-227392256_456239129'}];updateSelectionControls()",context);
 assert.equal(elements.get('playlistApplyButton').textContent,'Уже в очереди');

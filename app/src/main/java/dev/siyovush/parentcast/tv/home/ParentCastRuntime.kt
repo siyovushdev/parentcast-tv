@@ -22,7 +22,7 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
     val network = HomeNetwork(app, PORT)
     val session = PreparedRuntime.session(app)
     val prepared = PreparedRuntime.get(app, session)
-    val player = Media3PlaybackPlayer(app, session)
+    val player = Media3PlaybackPlayer(app, session, prepared::allowsPlaybackFile)
     val coordinator = PlaybackCoordinator(PreparedYouTubeSource(prepared, YtDlpYouTubeSource(app, session)),
         AtomicQueueStore(File(app.filesDir, "queue-state.json")), player, scope,
         autoResumeOnStartup = ParentModeSettings(app).autoResumeAfterBoot,
@@ -79,6 +79,7 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
             dispatcher, RequestSecurity(emptySet(), PORT) { addresses.panelHosts() + network.aliases() },
             { path -> app.assets.open(path).bufferedReader().use { it.readText() } }, playlists,
             PreparedApi(prepared, coordinator, dispatcher, ::mediaDuration), connectUrls = { network.urls() }, displayReady = { dispatcher.call { player.hasVisibleView() } }, localMedia = localMedia, mediaTitle = prepared::mediaTitle, mediaDuration = ::mediaDuration,
+            storage = StorageApi(prepared, coordinator, dispatcher),
             thumbnail = { id, owner ->
                 val allowed = dispatcher.call { coordinator.currentSnapshot().queueState.items.any { it.videoId == id } } ||
                     prepared.localEntries().any { it.id == id } || playlists.containsVideo(owner, id)

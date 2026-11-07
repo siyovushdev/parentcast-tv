@@ -99,20 +99,29 @@ internal class PlaylistApi(
         if (preview.state != PreviewState.READY || result.status !in setOf(PlaylistStatus.COMPLETE, PlaylistStatus.PARTIAL)) {
             throw PreviewException(409, "PREVIEW_NOT_APPLICABLE")
         }
-        val indices = json.getJSONArray("indices")
-        require(indices.length() in 1..500)
-        val values = List(indices.length()) { i ->
-            val value = indices.get(i)
-            require(value is Int || value is Long)
-            (value as Number).toLong().also { require(it in 1..Int.MAX_VALUE) }.toInt()
-        }
-        require(values.distinct().size == values.size)
+        val values = selectionIndices(json.getJSONArray("indices"))
+        // Older clients send only a selection; its order remains the source order.
+        // An explicit order must describe that exact selection, never introduce items.
+        val ordered = if (json.has("orderedIndices")) {
+            selectionIndices(json.getJSONArray("orderedIndices")).also {
+                require(it.size == values.size && it.toSet() == values.toSet())
+            }
+        } else values.sorted()
         val entries = result.entries.associateBy { it.index }
-        return values.sorted().map { index ->
+        return ordered.map { index ->
             val entry = entries[index] ?: throw IllegalArgumentException()
             require(entry.selectable && entry.videoId != null)
             entry
         }
+    }
+
+    private fun selectionIndices(indices: JSONArray): List<Int> {
+        require(indices.length() in 1..500)
+        return List(indices.length()) { i ->
+            val value = indices.get(i)
+            require(value is Int || value is Long)
+            (value as Number).toLong().also { require(it in 1..Int.MAX_VALUE) }.toInt()
+        }.also { require(it.distinct().size == it.size) }
     }
 
     private fun add(ids: List<String>, json: JSONObject, commandKey: String, fingerprint: String, group: QueueGroup, titles: Map<String,String>): ApiResponse {

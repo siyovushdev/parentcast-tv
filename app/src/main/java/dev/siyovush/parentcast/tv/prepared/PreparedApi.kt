@@ -8,9 +8,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal class PreparedApi(private val library: PreparedLibrary, private val coordinator: PlaybackCoordinator, private val dispatcher: CallDispatcher, private val metadataDuration: (String) -> Long? = { null }) {
-    fun readiness(id: String): String = library.snapshot().let { s -> if(id in s.deleting) "DELETING" else s.entries[id]?.status?.name ?: "WAITING" }
+    val uploadLimit:Long get() = EXTERNAL_LIBRARY_LIMIT
+    fun readiness(id: String): String = library.mediaReadiness(id)
     fun canPlay(id: String): Boolean = readiness(id) == "READY" ||
-        (!library.snapshot().enabled && !id.startsWith("local_") && !dev.siyovush.parentcast.tv.media.OnlineMediaIds.isVk(id))
+        (readiness(id)!="STORAGE_BUSY" && readiness(id)!="STORAGE_UNAVAILABLE" && !library.snapshot().enabled && !id.startsWith("local_") && !dev.siyovush.parentcast.tv.media.OnlineMediaIds.isVk(id))
     fun state(): JSONObject {
         val s = library.snapshot(); val entries = JSONArray()
         val queueItems=dispatcher.call { coordinator.currentSnapshot().queueState.items }
@@ -18,7 +19,7 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
         val queueIds=queueItems.map { it.videoId }.toSet()
         s.plan.forEachIndexed { index, id ->
             val e = s.entries[id] ?: PreparedEntry(id)
-            entries.put(JSONObject().put("index", index + 1).put("videoId", id).put("title", e.title.ifBlank { titles[id].orEmpty() }).put("status", if (id in s.deleting) "DELETING" else e.status.name)
+            entries.put(JSONObject().put("index", index + 1).put("videoId", id).put("title", e.title.ifBlank { titles[id].orEmpty() }).put("status", readiness(id)).put("storageId",library.mediaStorageId(id)).put("available",library.storageAvailable(id))
                 .put("durationSeconds",e.duration.takeIf { it>0 } ?: metadataDuration(e.id) ?: JSONObject.NULL).put("bytes", e.bytes).put("totalBytes", e.total.takeIf { e.totalKnown || e.status == PreparationStatus.READY } ?: JSONObject.NULL)
                 .put("percent", if (id in s.deleting) JSONObject.NULL else preparationPercent(e) ?: JSONObject.NULL).put("phase", e.phase)
                 .put("error", e.error).put("attempts", e.attempts).put("retryAtMs", e.retryAtMs))
@@ -26,13 +27,13 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
         val files = JSONArray()
         s.entries.values.filter { !it.local && (it.status == PreparationStatus.READY || it.id in s.deleting) }.forEach { e ->
             files.put(JSONObject().put("videoId", e.id).put("title", e.title).put("bytes", e.bytes)
-                .put("durationSeconds",e.duration.takeIf { it>0 } ?: metadataDuration(e.id) ?: JSONObject.NULL).put("deleting", e.id in s.deleting).put("inQueue", e.id in queueIds))
+                .put("durationSeconds",e.duration.takeIf { it>0 } ?: metadataDuration(e.id) ?: JSONObject.NULL).put("deleting", e.id in s.deleting).put("inQueue", e.id in queueIds).put("storageId",library.mediaStorageId(e.id)).put("available",library.storageAvailable(e.id)))
         }
         val storage = library.storageStats()
         return JSONObject().put("files", files).put("clearing", s.deleting.isNotEmpty()).put("operationError", s.operationError).put("usedBytes", storage.first).put("freeBytes", storage.second)
             .put("additionalBytes", minOf((library.limit - storage.first).coerceAtLeast(0), (storage.second - FREE_RESERVE).coerceAtLeast(0)))
             .put("targetGroupId",s.targetGroupId ?: JSONObject.NULL).put("enabled", s.enabled).put("paused", s.paused).put("storageError", s.storageError)
-            .put("ready", s.plan.count { s.entries[it]?.status == PreparationStatus.READY && it !in s.deleting }).put("count", s.plan.size)
+            .put("ready", s.plan.count { readiness(it)=="READY" }).put("count", s.plan.size)
             .put("limitBytes", library.limit).put("reserveBytes", FREE_RESERVE).put("entries", entries)
     }
     fun mutate(json: JSONObject): Pair<Int, String> {
@@ -65,7 +66,12 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
             }
             runBlocking(Dispatchers.IO) {
                 when (action) {
-                    "ENABLE" -> library.configure(true, ids, groupId)
+                    "ENABLE" -> {
+                        val storageId=json.optString("storageId").takeIf { it.isNotEmpty() }
+                        val storageVersion=if(json.has("storageVersion"))json.get("storageVersion").also { require(it is Int || it is Long) }.let { (it as Number).toLong() } else null
+                        require((storageId==null)==(storageVersion==null))
+                        library.configure(true, ids, groupId,storageId,storageVersion)
+                    }
                     "DISABLE" -> library.configure(false, ids)
                     "PAUSE" -> library.pause()
                     "RETRY" -> library.retry()
@@ -79,6 +85,8 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
                 library.syncQueue(q) }
             (if (action in setOf("DELETE", "DELETE_ALL", "RETRY_DELETE")) 202 else 200) to state().toString()
         } catch (error: Exception) {
+            if(error.message=="STORAGE_CHANGED")return 409 to "{\"error\":\"STORAGE_CHANGED\"}"
+            if(error is StorageUnavailable)return 409 to JSONObject().put("error",error.code).toString()
             (if (error.message == "BUSY") 409 else 503) to "{\"error\":\"PREPARATION_BUSY_OR_STORAGE_ERROR\"}"
         }
     }

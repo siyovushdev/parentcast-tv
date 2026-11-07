@@ -20,9 +20,10 @@ class LocalVideoApiTest {
     @get:Rule val temp=TemporaryFolder()
     private val fixtures=mutableListOf<Fixture>()
     @After fun close() { fixtures.forEach { it.local.close();it.coordinator.close();it.scope.cancel() } }
-    private inner class Fixture(val limit:Long=LIBRARY_LIMIT, validator: (File)->LocalMediaInfo={LocalMediaInfo(10,"video/mp4")},usb:UsbFiles?=null) {
+    private inner class Fixture(val limit:Long=LIBRARY_LIMIT, validator: (File)->LocalMediaInfo={LocalMediaInfo(10,"video/mp4")},usb:UsbFiles?=null,
+                              storageProvider:(()->List<MediaVolume>)?=null) {
         val root=temp.newFolder();val scope=CoroutineScope(SupervisorJob()+Dispatchers.Unconfined)
-        val store=PreparedStore(File(root,"media"))
+        val store=PreparedStore(File(root,"media"),storageProvider)
         val forbidden=object:YouTubeSource{override suspend fun resolve(videoId:String):ResolvedVideo=error("No YouTube for local media")}
         val library=PreparedLibrary(store,forbidden,TrackDownloader {_,_,_,_->error("No network")},scope,{_,_,_->},limit=limit)
         var prepares=0;var stops=0
@@ -63,15 +64,57 @@ class LocalVideoApiTest {
             assertTrue(f.library.localEntries().isEmpty());assertEquals(0L,f.store.usedBytes())
         }
     }
+    @Test fun localUploadKeepsItsSelectedDestinationWhenAnotherParentChangesStorage() = runBlocking {
+        val card=temp.newFolder();var mounted=true
+        val f=Fixture(storageProvider={listOf(MediaVolume("sd:TEST_CARD","Test card",card.takeIf { mounted },true,mounted,mounted))})
+        f.library.selectStorage("sd:TEST_CARD",f.library.storage.version(),StorageCommand("select-card-fixture","card"))
+        val task=f.start()
+        val mediaId=task.getString("mediaId")
+        assertEquals("sd:TEST_CARD",f.library.mediaStorageId(mediaId))
+        f.library.selectStorage(INTERNAL_STORAGE,f.library.storage.version(),StorageCommand("select-internal-fixture","internal"))
+        assertEquals(201,f.upload(task).code)
+        assertEquals(card.canonicalFile,f.store.track(mediaId).canonicalFile.parentFile)
+        assertFalse(File(f.store.directory,"$mediaId.video.mp4").exists())
+        assertEquals(PlaybackIntent.STOP,f.coordinator.currentSnapshot().queueState.intent)
+
+        mounted=false
+        val files=JSONObject(f.controller.handle(ApiRequest("GET","/api/local",f.headers,"","fixture")).body).getJSONArray("files")
+        assertEquals(1,files.length())
+        assertEquals(false,files.getJSONObject(0).getBoolean("available"))
+        assertEquals("STORAGE_UNAVAILABLE",files.getJSONObject(0).getString("preparationStatus"))
+        assertEquals(PreparationStatus.READY,f.library.snapshot().entries.getValue(mediaId).status)
+        mounted=true
+        assertEquals("READY",f.library.mediaReadiness(mediaId))
+        assertTrue(f.store.verify(f.library.localEntries().single()))
+    }
     @Test fun authHostOriginLengthAndTypeAreCheckedBeforeMediaBody() {
         val f=Fixture();val id=UUID.randomUUID().toString();val trap=object:InputStream(){override fun read():Int=error("Unauthorized body read")}
         val base=f.headers+("content-type" to "application/octet-stream")
         for((headers,status) in listOf((base-"authorization") to 401,(base+("host" to "evil.invalid:8765")) to 421,(base+("origin" to "https://evil.invalid")) to 403,(base-"x-parentcast-client") to 403,(base+("content-type" to "text/html")) to 415)) {
             assertEquals(status,f.controller.upload(ApiRequest("POST","/api/local/upload/$id",headers,"","fixture"),8,trap).code)
         }
-        assertEquals(413,f.controller.upload(ApiRequest("POST","/api/local/upload/$id",base,"","fixture"),LIBRARY_LIMIT+1,trap).code)
+        assertEquals(413,f.controller.upload(ApiRequest("POST","/api/local/upload/$id",base,"","fixture"),EXTERNAL_LIBRARY_LIMIT+1,trap).code)
         assertEquals(413,f.controller.upload(ApiRequest("POST","/api/local/upload/$id",base+("transfer-encoding" to "chunked"),"","fixture"),8,trap).code)
         val task=f.start();assertEquals(400,f.controller.upload(ApiRequest("POST","/api/local/upload/"+task.getString("id"),base,"","fixture"),9,trap).code)
+    }
+    @Test fun absentCardForQueuedImportDoesNotDisableLocalLibraryAfterRestart() = runBlocking {
+        val card=temp.newFolder();var mounted=true
+        val f=Fixture(storageProvider={listOf(MediaVolume("sd:RESTART","Test card",card.takeIf { mounted },true,mounted,mounted))})
+        f.library.selectStorage("sd:RESTART",f.library.storage.version(),StorageCommand("restart-card-select","card"))
+        val waiting=f.start()
+        f.library.selectStorage(INTERNAL_STORAGE,f.library.storage.version(),StorageCommand("restart-internal-select","internal"))
+        val ready=f.start();assertEquals(201,f.upload(ready).code)
+        mounted=false
+        val restored=LocalVideoApi(f.library,f.coordinator,f.dispatcher,f.jobs,f.scope,{LocalMediaInfo(10,"video/mp4")})
+        try {
+            val response=restored.read("/api/local",f.issued.first.deviceId)!!
+            assertEquals(200,response.code)
+            val json=JSONObject(response.body)
+            assertEquals(1,json.getJSONArray("files").length())
+            assertEquals(2,json.getJSONArray("jobs").length())
+            assertTrue((0 until json.getJSONArray("jobs").length()).any { json.getJSONArray("jobs").getJSONObject(it).getString("id")==waiting.getString("id") })
+            assertTrue(f.store.verify(f.library.localEntries().single()))
+        } finally { restored.close() }
     }
     @Test fun totalQuotaAndCacheCleanupProtectImportedVideos() = runBlocking {
         val f=Fixture(10);val first=f.start(8);assertEquals(201,f.upload(first).code)
