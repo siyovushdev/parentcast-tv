@@ -6,6 +6,7 @@ import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -51,7 +52,10 @@ class Media3PlaybackPlayer(
                     when (playbackState) {
                         Player.STATE_BUFFERING -> listener?.onBuffering(activeGeneration)
                         Player.STATE_ENDED -> listener?.onEnded(activeGeneration)
-                        Player.STATE_READY -> dispatchDiagnostics()
+                        Player.STATE_READY -> {
+                            if (hasRenderedFirstFrame && !player.playWhenReady) listener?.onFirstFrame(activeGeneration)
+                            dispatchDiagnostics()
+                        }
                     }
                 }
 
@@ -61,7 +65,7 @@ class Media3PlaybackPlayer(
 
                 override fun onRenderedFirstFrame() {
                     hasRenderedFirstFrame = true
-                    listener?.onFirstFrame(activeGeneration)
+                    if (player.playbackState == Player.STATE_READY) listener?.onFirstFrame(activeGeneration)
                     dispatchDiagnostics()
                 }
 
@@ -129,9 +133,14 @@ class Media3PlaybackPlayer(
         val headers = spec.headers
             .filterKeys { !it.equals("User-Agent", ignoreCase = true) }
             .toMutableMap()
-        val cookieHeader = dev.siyovush.parentcast.tv.youtube.CookieHeaderCodec.merge(
-            emptyList(),
-            session.cookiesFor(spec.url.toHttpUrl()),
+        val isLocal = spec.url.startsWith("file:")
+        if (isLocal) {
+            val file = java.io.File(java.net.URI(spec.url)).canonicalFile
+            val root = java.io.File(playerView.context.noBackupFilesDir, "prepared-programme").canonicalFile
+            require(file.parentFile == root && file.name.matches(Regex("[A-Za-z0-9_-]{11}[.](video|audio)[.]mp4")))
+        }
+        val cookieHeader = if (isLocal) null else dev.siyovush.parentcast.tv.youtube.CookieHeaderCodec.merge(
+            emptyList(), session.cookiesFor(spec.url.toHttpUrl()),
         )
         if (cookieHeader != null) headers["Cookie"] = cookieHeader
         val dataSource = DefaultHttpDataSource.Factory()
@@ -142,7 +151,7 @@ class Media3PlaybackPlayer(
             .setUri(spec.url)
             .setMimeType(spec.mimeType)
             .build()
-        return ProgressiveMediaSource.Factory(dataSource).createMediaSource(mediaItem)
+        return ProgressiveMediaSource.Factory(DefaultDataSource.Factory(playerView.context, dataSource)).createMediaSource(mediaItem)
     }
 
     private fun dispatchDiagnostics() {

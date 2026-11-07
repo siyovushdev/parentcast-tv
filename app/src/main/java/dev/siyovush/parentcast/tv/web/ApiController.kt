@@ -31,6 +31,7 @@ internal class ApiController(
     private val security: RequestSecurity,
     private val assetLoader: (String) -> String,
     private val playlists: PlaylistApi? = null,
+    private val prepared: dev.siyovush.parentcast.tv.prepared.PreparedApi? = null,
 ) {
     fun handle(request: ApiRequest): ApiResponse {
         if (!security.isHostAllowed(request.headers["host"])) {
@@ -68,6 +69,7 @@ internal class ApiController(
     private fun authorizedApi(request: ApiRequest): ApiResponse {
         val device = authorizedDevice(request.headers) ?: return ApiResponse(401, error("UNAUTHORIZED"))
         if (request.method == "GET" && request.path == "/api/state") return ApiResponse(200, stateBody())
+        if (request.method == "GET" && request.path == "/api/prepared") return ApiResponse(200, prepared?.state()?.toString() ?: "{}")
         if (request.method == "GET" && request.path == "/api/devices") return devices()
         if (request.method == "GET") {
             playlists?.read(request.path, device.deviceId)?.let { return it }
@@ -75,6 +77,7 @@ internal class ApiController(
         if (request.method != "POST") return ApiResponse(404, error("NOT_FOUND"))
         if (!security.isStateChangeAllowed(request.headers)) return ApiResponse(403, error("FORBIDDEN"))
         return when (request.path) {
+            "/api/prepared" -> mutation(request, device) { json -> prepared?.mutate(json) ?: (404 to error("NOT_FOUND")) }
             "/api/queue/add" -> mutation(request, device) { json -> add(json) }
             "/api/queue/play-now" -> mutation(request, device) { json -> playNow(json) }
             "/api/playback" -> mutation(request, device) { json -> playback(json) }
@@ -106,7 +109,7 @@ internal class ApiController(
         val key = json.optString("idempotencyKey")
         if (key.length < 8 || key.length > 100) return ApiResponse(400, error("BAD_REQUEST"))
         val storageKey = commandStorageKey(request, device, json)
-        val fingerprint = if (playlists?.handles(request.path) == true) requestFingerprint(json) else null
+        val fingerprint = if (playlists?.handles(request.path) == true || request.path == "/api/prepared") requestFingerprint(json) else null
         idempotencyStore.get(storageKey)?.let {
             if (fingerprint != null && it.requestFingerprint != fingerprint) return ApiResponse(409, error("IDEMPOTENCY_KEY_REUSED"))
             return ApiResponse(it.code, it.body)
@@ -208,7 +211,7 @@ internal class ApiController(
 
     internal fun stateBody(): String {
         val snapshot = dispatcher.call { coordinator.currentSnapshot() }
-        return snapshotJson(snapshot).toString()
+        return snapshotJson(snapshot).apply { prepared?.let { put("prepared", it.state()) } }.toString()
     }
 
     private fun snapshotJson(snapshot: CoordinatorSnapshot): JSONObject {
@@ -233,6 +236,7 @@ internal class ApiController(
             .put("intent", snapshot.queueState.intent.name)
             .put("finished", snapshot.queueState.finished)
             .put("status", snapshot.status.name)
+            .put("localPlayback", snapshot.localPlayback)
             .put("currentTitle", snapshot.currentTitle)
             .put("diagnostics", snapshot.diagnostics)
             .put("error", error ?: JSONObject.NULL)

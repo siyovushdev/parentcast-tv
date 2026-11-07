@@ -137,7 +137,39 @@ function renderState() {
     byId("playbackError").textContent = state.error ? `${state.error.kind}: ${state.error.diagnostic || ""}` : "";
     byId("diagnostics").textContent = state.diagnostics || "";
     renderQueue();
+    renderPrepared();
     updateSelectionControls();
+}
+
+function renderPrepared() {
+    const s = state && state.prepared;
+    if (!s) return;
+    byId("preparedSummary").textContent = `${s.enabled ? "Локальный режим" : "Потоковый режим"}${s.paused ? "; подготовка остановлена" : ""}. Готово ${s.ready} из ${s.count}.${s.storageError ? " Ошибка хранилища подготовки." : ""}`;
+    const rows = byId("preparedEntries");
+    rows.replaceChildren();
+    const names = {WAITING: "Ожидает загрузки", DOWNLOADING: "Подготовка", READY: "Готово", ERROR: "Ошибка"};
+    const errors = {YOUTUBE_AUTH_REQUIRED: "YouTube требует авторизацию. Включите действующую тестовую сессию на ТВ и повторите подготовку", NO_SPACE: "Недостаточно места в лимите / свободного места", UNSUPPORTED: "Нужен публичный завершённый ролик", DOWNLOAD_FAILED: "Загрузка не завершена. Проверьте сеть и повторите", FILE_DAMAGED: "Файл повреждён. Повторите загрузку"};
+    s.entries.forEach(e => {
+        const row = document.createElement("p");
+        row.textContent = `${e.index}. ${e.title || e.videoId} — ${names[e.status] || e.status}; ${(e.bytes / 1048576).toFixed(1)} МиБ${e.error ? "; " + (errors[e.error] || e.error) : ""}`;
+        rows.append(row);
+    });
+    if (s.enabled && state.status === "LOADING") byId("playerStatus").textContent = "Ожидание полностью подготовленного файла";
+}
+
+async function preparationAction(action) {
+    if (!state) return;
+    return withBusy("preparation", async () => {
+        byId("preparedMessage").textContent = "Отправка команды…";
+        try {
+            await perform(`preparation-${commandKey()}`, "/api/prepared", {action, queueVersion: state.queueVersion, idempotencyKey: commandKey()});
+            byId("preparedMessage").textContent = "Команда подготовки принята";
+            await refreshState();
+        } catch (error) {
+            byId("preparedMessage").textContent = `Команда не подтверждена: ${apiErrorText(error)}`;
+            throw error;
+        }
+    });
 }
 
 function renderQueue() {
@@ -195,6 +227,7 @@ function apiErrorText(error) {
         COLLECTION_NOT_FOUND: "Подборка уже удалена. Обновите список сохранённых подборок.",
         PREVIEW_BUSY: "Приставка уже получает несколько списков. Дождитесь завершения или отмените другой предпросмотр и повторите.",
         COMMAND_STORAGE_LIMIT: "Достигнут лимит сохранённых команд. Повторите позже.",
+        PREPARATION_BUSY_OR_STORAGE_ERROR: "Подготовка ещё занята или хранилище недоступно. Остановите подготовку, дождитесь завершения отмены и повторите.",
     };
     const code = error.data && error.data.error;
     return messages[code] || (error.status === 429 ? "Приставка временно занята. Повторите позже." : error.message);
@@ -683,6 +716,10 @@ document.querySelectorAll("[data-playback]").forEach(button => {
 byId("queue").addEventListener("click", event => {
     const button = event.target.closest("button[data-action]");
     if (button) run(() => queueAction(button.dataset.action, button.dataset.id));
+});
+
+document.querySelectorAll("[data-prepared]").forEach(button => {
+    button.addEventListener("click", () => run(() => preparationAction(button.dataset.prepared)));
 });
 
 showPairing(!device);

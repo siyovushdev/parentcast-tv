@@ -95,6 +95,7 @@ open class MainActivity : Activity() {
     private lateinit var deviceMode: DeviceModeController
     private var parentDialog: AlertDialog? = null
     private var foreground = false
+    private lateinit var preparedLibrary: dev.siyovush.parentcast.tv.prepared.PreparedLibrary
     private var retired = false
     private var ownerReady = false
     protected open val isPrivilegedKioskTask: Boolean = false
@@ -155,18 +156,19 @@ open class MainActivity : Activity() {
         panelStatus = debugRoot.findViewById(R.id.panelStatus)
         devicesContainer = debugRoot.findViewById(R.id.devicesContainer)
 
-        youTubeSession = dev.siyovush.parentcast.tv.youtube.YouTubeSessionFactory.create(this)
+        youTubeSession = dev.siyovush.parentcast.tv.prepared.PreparedRuntime.session(this)
         val playerView = playerRoot.findViewById<PlayerView>(R.id.playerView)
         playbackPlayer = Media3PlaybackPlayer(playerView, youTubeSession)
+        preparedLibrary = dev.siyovush.parentcast.tv.prepared.PreparedRuntime.get(this, youTubeSession)
         coordinator = PlaybackCoordinator(
-            source = YtDlpYouTubeSource(this, youTubeSession),
+            source = dev.siyovush.parentcast.tv.prepared.PreparedYouTubeSource(preparedLibrary, YtDlpYouTubeSource(this, youTubeSession)),
             store = AtomicQueueStore(File(filesDir, "queue-state.json")),
             player = playbackPlayer,
             scope = scope,
             autoResumeOnStartup = if (liveTransfer) StartupPlaybackPolicy.resumeLiveOwner(previous!!.latestSnapshot)
                 else modeSettings.autoResumeAfterBoot,
             authorizationGate = {
-                !youTubeSession.isSupported || youTubeSession.isEnabled
+                preparedLibrary.snapshot().enabled || !youTubeSession.isSupported || youTubeSession.isEnabled
             },
         )
 
@@ -194,6 +196,7 @@ open class MainActivity : Activity() {
             security = RequestSecurity(addressProvider.panelHosts(), PANEL_PORT),
             assetLoader = { path -> assets.open(path).bufferedReader().use { it.readText() } },
             playlists = playlistApi,
+            prepared = dev.siyovush.parentcast.tv.prepared.PreparedApi(preparedLibrary, coordinator, dispatcher),
         )
         try {
             httpServer = ParentHttpServer(PANEL_PORT, apiController).apply { start(5_000, true) }
@@ -233,6 +236,7 @@ open class MainActivity : Activity() {
         ownerReady = true
         coordinator.setListener(::render)
         coordinator.start()
+        preparedLibrary.resumePending()
         handler.postDelayed(savePosition, SAVE_INTERVAL_MS)
     }
 
@@ -667,11 +671,15 @@ open class MainActivity : Activity() {
 
     private fun render(snapshot: CoordinatorSnapshot) {
         latestSnapshot = snapshot
+        if (::preparedLibrary.isInitialized) {
+            val q = snapshot.queueState
+            preparedLibrary.schedule(q.items.drop(q.currentIndex.coerceAtLeast(0)).map { it.videoId })
+        }
         val playerMessage = when (snapshot.status) {
             PlaybackStatus.IDLE -> getString(R.string.player_waiting)
             PlaybackStatus.WAITING_FOR_SESSION -> getString(R.string.player_waiting_session)
-            PlaybackStatus.LOADING -> getString(R.string.player_loading)
-            PlaybackStatus.BUFFERING -> getString(R.string.player_buffering)
+            PlaybackStatus.LOADING -> if (preparedLibrary.snapshot().enabled) "Подготавливаем программу…" else getString(R.string.player_loading)
+            PlaybackStatus.BUFFERING -> if (snapshot.localPlayback) null else getString(R.string.player_buffering)
             PlaybackStatus.PLAYING -> null
             PlaybackStatus.PAUSED -> getString(R.string.player_paused)
             PlaybackStatus.STOPPED -> getString(R.string.player_stopped)

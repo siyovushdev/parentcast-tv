@@ -12,7 +12,10 @@ import dev.siyovush.parentcast.tv.youtube.YouTubeSourceException
 import dev.siyovush.parentcast.tv.youtube.safeDiagnostic
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
@@ -21,6 +24,7 @@ import kotlin.coroutines.coroutineContext
 class YtDlpYouTubeSource(
     context: Context,
     private val session: YouTubeSession,
+    private val publicOnly: Boolean = false,
 ) : YouTubeSource {
     private val appContext = context.applicationContext
     private val runtime = YtDlpRuntime(appContext)
@@ -31,14 +35,22 @@ class YtDlpYouTubeSource(
         require(Regex("[A-Za-z0-9_-]{11}").matches(videoId))
         runtime.ensureInitialized()
         val processId = "parentcast-${UUID.randomUUID()}"
-        var completed = false
-        coroutineContext[Job]?.invokeOnCompletion {
-            if (!completed) YoutubeDL.getInstance().destroyProcessById(processId)
+        // A completion handler runs too late for a blocking execute(). A cancellable child
+        // destroys the registered subprocess while execute is still waiting for network I/O.
+        val cancellation = launch(start = CoroutineStart.UNDISPATCHED) {
+            try { awaitCancellation() }
+            finally { runCatching { YoutubeDL.getInstance().destroyProcessById(processId) } }
         }
         try {
+            coroutineContext.ensureActive()
             val request = createRequest(videoId)
             val response = YoutubeDL.getInstance().execute(request, processId, false, null)
             val root = YoutubeDL.objectMapper.readTree(response.out)
+            if (publicOnly) {
+                if (root.path("availability").asText() != "public" || root.path("live_status").asText() != "not_live" || root.path("duration").asLong() <= 0) {
+                    throw YouTubeSourceException(PlaybackFailure(PlaybackErrorKind.UNSUPPORTED, diagnostic = "UNSUPPORTED"))
+                }
+            }
             parser.parse(root, videoId)
         } catch (error: CancellationException) {
             throw error
@@ -46,10 +58,12 @@ class YtDlpYouTubeSource(
             throw CancellationException("yt-dlp request cancelled")
         } catch (error: InterruptedException) {
             throw CancellationException("yt-dlp request interrupted")
+        } catch (error: YouTubeSourceException) {
+            throw error
         } catch (error: Throwable) {
             throw mapError(error)
         } finally {
-            completed = true
+            cancellation.cancel()
         }
     }
 
