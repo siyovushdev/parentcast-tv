@@ -31,11 +31,15 @@ class Media3PlaybackPlayer(
 ) : PlaybackPlayer {
     private val context = context.applicationContext
     private var playerView: PlayerView? = null
-    private val player = ExoPlayer.Builder(this.context).build()
+    private val player = ExoPlayer.Builder(this.context).setLoadControl(
+        androidx.media3.exoplayer.DefaultLoadControl.Builder().setBufferDurationsMs(30_000,90_000,3_000,5_000)
+            .setTargetBufferBytes(48*1024*1024).setPrioritizeTimeOverSizeThresholds(false).build()
+    ).build()
     private var listener: PlaybackPlayer.Listener? = null
     private var activeGeneration = 0L
     private var activeVideo: ResolvedVideo? = null
     private var hasRenderedFirstFrame = false
+    private var rebufferCount = 0
 
     init {
         player.setAudioAttributes(
@@ -53,7 +57,10 @@ class Media3PlaybackPlayer(
             object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     when (playbackState) {
-                        Player.STATE_BUFFERING -> listener?.onBuffering(activeGeneration)
+                        Player.STATE_BUFFERING -> {
+                            if(hasRenderedFirstFrame && player.playWhenReady)rebufferCount++
+                            listener?.onBuffering(activeGeneration);dispatchDiagnostics()
+                        }
                         Player.STATE_ENDED -> listener?.onEnded(activeGeneration)
                         Player.STATE_READY -> {
                             if (hasRenderedFirstFrame && !player.playWhenReady) listener?.onFirstFrame(activeGeneration)
@@ -104,6 +111,7 @@ class Media3PlaybackPlayer(
     ) {
         activeGeneration = generation
         activeVideo = video
+        rebufferCount = 0
         hasRenderedFirstFrame = false
         val videoSource = progressiveSource(video.videoId, video.video)
         val source = video.audio?.let { audio ->
@@ -149,6 +157,11 @@ class Media3PlaybackPlayer(
     }
 
     private fun progressiveSource(videoId: String, spec: StreamSpec): MediaSource {
+        if(spec.onlineKey!=null) {
+            require(spec.url.startsWith("parentcast-online://"))
+            val factory=requireNotNull(streamDataSource(spec)) { "Online source unavailable" }
+            return ProgressiveMediaSource.Factory(factory).setLoadErrorHandlingPolicy(dev.siyovush.parentcast.tv.streaming.SharedLoadErrorPolicy()).createMediaSource(MediaItem.Builder().setUri(spec.url).setMimeType(spec.mimeType).build())
+        }
         if(spec.sharedCacheKey!=null) {
             require(spec.url.startsWith("parentcast-cache://"))
             val factory=requireNotNull(streamDataSource(spec)) { "Shared cache unavailable" }
@@ -184,6 +197,7 @@ class Media3PlaybackPlayer(
         val diagnostics = buildString {
             append("Выбор источника: ")
             append(video.selectionDescription)
+            append("\nПовторных буферизаций: ");append(rebufferCount)
             append("\n")
             append("Фактическое видео: ")
             append(formatDescription(player.videoFormat, isVideo = true))

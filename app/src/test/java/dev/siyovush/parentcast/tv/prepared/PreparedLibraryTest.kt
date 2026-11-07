@@ -274,4 +274,22 @@ class PreparedLibraryTest {
         try {library.cleanup();fail("Unknown queue must not authorize deletion")} catch(e:IllegalStateException) {assertEquals("BUSY",e.message)}
         assertTrue(storage.verify(library.snapshot().entries.getValue(first)))
     }
+    @Test fun onlinePriorityCancelsPreparationWithoutChangingParentSettingsAndCanResume()=runBlocking {
+        val storage=store();val entered=CompletableDeferred<Unit>();var downloads=0;var wakes=0
+        val library=PreparedLibrary(storage,object:YouTubeSource {override suspend fun resolve(videoId:String)=video(videoId)},
+            TrackDownloader {spec,target,allowance,progress->
+                if(++downloads==1){entered.complete(Unit);awaitCancellation()}
+                else downloader().download(spec,target,allowance,progress)
+            },this,{_,_,_->},wakeService={wakes++})
+        library.configure(true,listOf(first));val worker=launch(Dispatchers.IO){library.runWorker()}
+        withTimeout(3000){entered.await()};library.setOnlinePriority(true);worker.join()
+        assertTrue(library.onlinePriority);assertFalse(library.hasPending());assertFalse(storage.read().paused)
+        assertTrue(library.snapshot().enabled);assertEquals(PreparationStatus.WAITING,library.snapshot().entries[first]!!.status)
+        library.runWorker();assertEquals(1,downloads)
+        val before=wakes;library.setOnlinePriority(false);assertTrue(wakes>before);assertTrue(library.hasPending())
+        library.runWorker();assertEquals(PreparationStatus.READY,library.snapshot().entries[first]!!.status)
+        library.pause();library.setOnlinePriority(true);val paused=storage.read();library.setOnlinePriority(false)
+        assertTrue(library.snapshot().paused);assertEquals(paused,storage.read())
+    }
+
 }

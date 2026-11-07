@@ -27,8 +27,9 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
     val session = PreparedRuntime.session(app)
     val prepared = PreparedRuntime.get(app, session)
     val streaming = StreamingRuntime.get(app, prepared, session)
-    val player = Media3PlaybackPlayer(app, session, prepared::allowsPlaybackFile, streaming::dataSourceFactory)
-    val coordinator = PlaybackCoordinator(streaming.source(PreparedYouTubeSource(prepared, YtDlpYouTubeSource(app, session))),
+    val onlinePlayback = dev.siyovush.parentcast.tv.streaming.OnlinePlayback(File(app.noBackupFilesDir,"online-playback.json"),session,streaming::playbackPreview)
+    val player = Media3PlaybackPlayer(app, session, prepared::allowsPlaybackFile) { spec -> onlinePlayback.dataSourceFactory(spec) ?: streaming.dataSourceFactory(spec) }
+    val coordinator = PlaybackCoordinator(onlinePlayback.source(streaming.source(PreparedYouTubeSource(prepared, YtDlpYouTubeSource(app, session)))),
         AtomicQueueStore(File(app.filesDir, "queue-state.json")), player, scope,
         autoResumeOnStartup = ParentModeSettings(app).autoResumeAfterBoot,
         authorizationGate = { prepared.snapshot().enabled || !session.isSupported || session.isEnabled },
@@ -63,8 +64,9 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
                     put(JSONObject().put("id",q.id).put("height",q.height).put("sizeBytes",q.sizeBytes ?: JSONObject.NULL))
                 } })
         } },
-        startSaving = { id,quality,storage,version,watch -> streaming.start(id,quality,storage,version,watch); Unit },
+        startSaving = { id,quality,storage,version,watch -> streaming.start(id,quality,storage,version,watch); if(watch)onlinePlayback.forget(id); Unit },
         displayReady = { dispatcher.call { player.hasVisibleView() } },
+        startOnline = onlinePlayback::select,
         remember = { id,data ->
             data.optLong("durationSeconds").takeIf { it>0 }?.let { durations.rememberAll(mapOf(id to it)) }
             thumbnailSource.remember(id,data.optString("thumbnailUrl").takeUnless { it=="null" || it.isBlank() })
@@ -103,11 +105,11 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
         api = ApiController(pairing, tokens, AtomicIdempotencyStore(File(app.filesDir, "idempotency.json")), coordinator,
             dispatcher, RequestSecurity(emptySet(), PORT) { addresses.panelHosts() + network.aliases() },
             { path -> app.assets.open(path).bufferedReader().use { it.readText() } }, playlists,
-            PreparedApi(prepared, coordinator, dispatcher, ::mediaDuration), connectUrls = { network.urls() }, displayReady = { dispatcher.call { player.hasVisibleView() } }, localMedia = localMedia, mediaTitle = prepared::mediaTitle, mediaDuration = ::mediaDuration,
+            PreparedApi(prepared, coordinator, dispatcher, ::mediaDuration,onlinePlayback::enabled), connectUrls = { network.urls() }, displayReady = { dispatcher.call { player.hasVisibleView() } }, localMedia = localMedia, mediaTitle = prepared::mediaTitle, mediaDuration = ::mediaDuration,
             storage = StorageApi(prepared, coordinator, dispatcher),
             programme = ProgrammeApi(coordinator,dispatcher,covers::exists), covers = covers, online = online,
             streamingState = { current,storage -> JSONObject().put("entries",JSONArray().apply { streaming.states(storage).forEach { put(streamStatus(it)) } })
-                .put("current",current?.let { streaming.state(it,storage) }?.let(::streamStatus) ?: JSONObject.NULL) },
+                .put("current",if(current!=null && onlinePlayback.enabled(current))JSONObject().put("videoId",current).put("mode","ONLINE").put("height",onlinePlayback.height(current)).put("percent",JSONObject.NULL) else current?.let { streaming.state(it,storage) }?.let(::streamStatus) ?: JSONObject.NULL) },
             thumbnail = { id, owner ->
                 val allowed = dispatcher.call { coordinator.currentSnapshot().queueState.items.any { it.videoId == id } } ||
                     prepared.localEntries().any { it.id == id } || playlists.containsVideo(owner, id) || online.containsVideo(owner,id)
@@ -116,6 +118,8 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
         controller = api
         coordinator.setListener { snapshot ->
             val q = snapshot.queueState
+            onlinePlayback.syncPlayback(q.currentItem?.videoId?.takeIf {q.intent!=PlaybackIntent.STOP})
+            prepared.setOnlinePriority(q.intent==PlaybackIntent.PLAY && q.currentItem?.videoId?.let(onlinePlayback::enabled)==true)
             prepared.syncQueue(q)
             streaming.syncPlayback(q.currentItem?.videoId?.takeIf { q.intent==PlaybackIntent.PLAY })
             changed(snapshot)
@@ -130,7 +134,7 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
     fun unobserve(observer: (CoordinatorSnapshot) -> Unit) { observers -= observer }
     fun close() {
         runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
-        handler.removeCallbacksAndMessages(null); server?.stop(); durations.close(); thumbnails.close(); previews.close(); online.close(); network.close(); localMedia.close()
+        handler.removeCallbacksAndMessages(null); server?.stop(); durations.close(); thumbnails.close(); previews.close(); online.close(); onlinePlayback.close(); prepared.setOnlinePriority(false); network.close(); localMedia.close()
         try { coordinator.savePosition() } finally { coordinator.close(); player.release(); scope.cancel(); observers.clear() }
     }
     companion object { const val PORT = 8765 }

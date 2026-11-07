@@ -1,6 +1,12 @@
 # План реализации
 
-Текущая задача: `tasks/Stream-startup.md` — устранение долгой буферизации
+Текущая задача: `tasks/Online-playback.md` — прямой онлайн-просмотр без записи
+на microSD, реализован.397unit/lint/debug/release/web PASS; H728 VK480p — PASS
+в122s наблюдения без повторной буферизации. Старт/seek имеют задержки; YouTube
+preview PREVIEW_TIMEOUT, онлайнNOT_RUN. Данные сохранены, STOP.
+Результаты: `docs/reports/Online-playback.md`; отдельный Draft PR, без Merge.
+
+Предыдущее задание: `tasks/Stream-startup.md` — устранение долгой буферизации
 stream+save на microSD, PARTIAL. Оптимизации v22 установлены;386unit/lint/debug/release PASS.
 Плавный ранний просмотр H728 FAIL: буферизация остаётся; сохранение и данные PASS.
 До локализации оставшейся задержки использовать полную подготовку до READY.
