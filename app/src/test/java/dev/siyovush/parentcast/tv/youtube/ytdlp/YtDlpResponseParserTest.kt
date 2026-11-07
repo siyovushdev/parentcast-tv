@@ -14,6 +14,19 @@ class YtDlpResponseParserTest {
     private val parser = YtDlpResponseParser()
 
     @Test
+    fun progressUsesExactFilesizeOrClenAndNeverApproximation() {
+        fun parse(extra: String) = parser.parse(mapper.readTree("""{"id":"jNQXAC9IVRw",
+            "url":"https://media.invalid/file.mp4?clen=120", "protocol":"https", "ext":"mp4",
+            "vcodec":"avc1.64001f", "acodec":"mp4a.40.2", "height":720 $extra} """), "jNQXAC9IVRw")
+        assertEquals(80L, parse(",\"filesize\":80").video.sizeBytes)
+        assertEquals(120L, parse(",\"filesize_approx\":999999").video.sizeBytes)
+        val withoutSize = mapper.readTree("""{"id":"jNQXAC9IVRw", "url":"https://media.invalid/file.mp4",
+            "protocol":"https", "ext":"mp4", "vcodec":"avc1.64001f", "acodec":"mp4a.40.2",
+            "height":720,"filesize_approx":999999} """)
+        assertNull(parser.parse(withoutSize, "jNQXAC9IVRw").video.sizeBytes)
+    }
+
+    @Test
     fun parsesSeparateVideoAndAudioAndFiltersSecretHeaders() {
         val root = mapper.readTree(
             """

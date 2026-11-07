@@ -32,6 +32,8 @@ internal class ApiController(
     private val assetLoader: (String) -> String,
     private val playlists: PlaylistApi? = null,
     private val prepared: dev.siyovush.parentcast.tv.prepared.PreparedApi? = null,
+    private val connectUrls: (() -> List<String>)? = null,
+    private val displayReady: (() -> Boolean)? = null,
 ) {
     fun handle(request: ApiRequest): ApiResponse {
         if (!security.isHostAllowed(request.headers["host"])) {
@@ -83,6 +85,11 @@ internal class ApiController(
             "/api/playback" -> mutation(request, device) { json -> playback(json) }
             "/api/queue/delete" -> mutation(request, device) { json -> deletePending(json) }
             "/api/queue/move" -> mutation(request, device) { json -> movePending(json) }
+            "/api/queue/clear-all" -> mutation(request, device) { json ->
+                try {
+                    if (dispatcher.call { coordinator.clearAll(json.optLong("queueVersion", -1)) }) 200 to stateBody() else conflict()
+                } catch (_: Exception) { 503 to error("COMMAND_STORAGE_ERROR") }
+            }
             "/api/queue/clear" -> mutation(request, device) { json -> clearPending(json) }
             "/api/devices/revoke" -> mutation(request, device) { json -> revoke(json) }
             else -> if (playlists?.handles(request.path) == true) {
@@ -109,7 +116,7 @@ internal class ApiController(
         val key = json.optString("idempotencyKey")
         if (key.length < 8 || key.length > 100) return ApiResponse(400, error("BAD_REQUEST"))
         val storageKey = commandStorageKey(request, device, json)
-        val fingerprint = if (playlists?.handles(request.path) == true || request.path == "/api/prepared") requestFingerprint(json) else null
+        val fingerprint = if (playlists?.handles(request.path) == true || request.path in setOf("/api/prepared", "/api/queue/clear-all")) requestFingerprint(json) else null
         idempotencyStore.get(storageKey)?.let {
             if (fingerprint != null && it.requestFingerprint != fingerprint) return ApiResponse(409, error("IDEMPOTENCY_KEY_REUSED"))
             return ApiResponse(it.code, it.body)
@@ -142,6 +149,7 @@ internal class ApiController(
     }
 
     private fun playNow(json: JSONObject): Pair<Int, String> {
+        if (displayReady?.invoke() == false) return 409 to error("OPEN_PLAYER_ON_TV")
         val videoId = try {
             YouTubeVideoIdParser.parse(json.optString("videoId"))
         } catch (error: Exception) {
@@ -154,6 +162,10 @@ internal class ApiController(
     private fun playback(json: JSONObject): Pair<Int, String> {
         val action = json.optString("action")
         if (action !in setOf("PLAY", "PAUSE_RESUME", "NEXT", "STOP")) return badRequest()
+        val intent = dispatcher.call { coordinator.currentSnapshot().queueState.intent }
+        val startsPlayback = action == "PLAY" || (action == "PAUSE_RESUME" && intent != dev.siyovush.parentcast.tv.queue.PlaybackIntent.PLAY) ||
+            (action == "NEXT" && intent == dev.siyovush.parentcast.tv.queue.PlaybackIntent.PLAY)
+        if (startsPlayback && displayReady?.invoke() == false) return 409 to error("OPEN_PLAYER_ON_TV")
         dispatcher.call {
             when (action) {
                 "PLAY" -> coordinator.play()
@@ -211,7 +223,11 @@ internal class ApiController(
 
     internal fun stateBody(): String {
         val snapshot = dispatcher.call { coordinator.currentSnapshot() }
-        return snapshotJson(snapshot).apply { prepared?.let { put("prepared", it.state()) } }.toString()
+        return snapshotJson(snapshot).apply {
+            prepared?.let { put("prepared", it.state()) }
+            connectUrls?.let { put("connectUrls", JSONArray(it())) }
+            displayReady?.let { put("displayReady", it()) }
+        }.toString()
     }
 
     private fun snapshotJson(snapshot: CoordinatorSnapshot): JSONObject {

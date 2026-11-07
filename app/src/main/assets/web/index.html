@@ -27,10 +27,18 @@
     </section>
 
     <div id="controlSection" hidden>
+        <section class="card" aria-labelledby="homeConnectHeading">
+            <h2 id="homeConnectHeading">Пульт для всей семьи</h2>
+            <p>Для другого телефона: откройте QR-код в родительском меню на ТВ, введите PIN один раз и сохраните страницу в избранное или на главный экран.</p>
+            <p id="homeConnectUrls" class="muted"></p>
+            <p class="muted">Телефон и приставка должны быть в одной домашней сети. Гостевая Wi-Fi может быть изолирована. Если VPN или прокси перехватывает домашние адреса, добавьте домашнюю сеть в его исключения. После принудительной остановки приложения откройте ParentCast на ТВ.</p>
+        </section>
+
         <section class="card">
             <h2>Состояние</h2>
             <p id="playerStatus" class="status">Нет данных</p>
             <p id="currentTitle"></p>
+            <p id="displayMessage" class="muted"></p>
             <p id="queueSummary" class="muted"></p>
             <p id="updatedAt" class="muted"></p>
             <p id="playbackError" class="error"></p>
@@ -46,17 +54,21 @@
         <section class="card" aria-labelledby="preparedHeading">
             <h2 id="preparedHeading">Подготовленная программа</h2>
             <p class="muted">Заранее скачайте выбранную очередь. В этом режиме показываются только полностью готовые файлы; следующие загружаются во время просмотра. Включение не запускает и не останавливает текущий ролик, режим применяется при следующем запуске.</p>
-            <p class="muted">Лимит 2 ГиБ, резерв свободного места 1 ГиБ. Если следующий ролик не готов, придётся подождать. После перезапуска незавершённая загрузка начинается заново.</p>
+            <p class="muted">Лимит 10 ГиБ, резерв свободного места 1 ГиБ. Если следующий ролик не готов, придётся подождать. После перезапуска незавершённая загрузка начинается заново.</p>
             <p id="preparedSummary" role="status">Нет данных</p>
+            <p id="preparedStorage" class="muted"></p>
             <div class="actions">
                 <button data-prepared="ENABLE">Подготовить очередь / продолжить</button>
                 <button data-prepared="PAUSE" class="secondary">Остановить подготовку</button>
                 <button data-prepared="RETRY" class="secondary">Повторить ошибки</button>
                 <button data-prepared="CLEANUP" class="secondary">Удалить файлы вне очереди</button>
+                <button data-prepared="RETRY_DELETE" class="secondary" hidden>Повторить удаление</button>
+                <button data-prepared="DELETE_ALL" class="danger">Удалить все скачанные файлы</button>
                 <button data-prepared="DISABLE" class="secondary">Вернуться к потоковому режиму</button>
             </div>
             <p id="preparedMessage" class="message"></p>
             <div id="preparedEntries"></div>
+            <details><summary>Все готовые файлы на приставке</summary><div id="preparedFiles"></div></details>
         </section>
 
         <section class="card">
@@ -77,8 +89,10 @@
         <section class="card">
             <div class="row">
                 <h2>Очередь</h2>
-                <button id="clearPendingButton" class="secondary">Очистить ожидающие</button>
+                <button id="clearAllButton" class="danger">Очистить всю очередь</button>
+                <button id="clearPendingButton" class="secondary">Удалить только ожидающие</button>
             </div>
+            <p class="muted">Полная очистка останавливает ролик и удаляет текущий, ожидающие и историю очереди. Скачанные файлы и сохранённые подборки остаются.</p>
             <div id="queue"></div>
         </section>
 

@@ -47,4 +47,7 @@
     <string name="debug_browser_auth_hint">Для входа в веб-пульт достаточно действующего родительского PIN. Доступ каждого браузера можно отозвать отдельно.</string>
     <string name="debug_devices">Сопряжённые устройства</string>
     <string name="debug_revoke">Отозвать: %1$s</string>
+    <string name="panel_qr_description">QR-код родительского пульта</string>
+    <string name="panel_home_help">Телефон должен быть в той же домашней сети. Наведите камеру на QR-код, введите родительский PIN один раз и сохраните страницу в избранное или на главный экран. Если короткое имя не открывается, используйте IP-адрес выше. VPN/прокси на телефоне должен пропускать домашнюю сеть напрямую.</string>
+    <string name="panel_next_address">Другой адрес / QR с IP</string>
 </resources>

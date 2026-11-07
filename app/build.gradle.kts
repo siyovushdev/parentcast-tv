@@ -52,6 +52,8 @@ android {
 }
 
 dependencies {
+    implementation("com.google.zxing:core:3.5.4")
+    implementation("org.jmdns:jmdns:3.6.5")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
     implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")

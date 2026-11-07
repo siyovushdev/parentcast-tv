@@ -7,19 +7,21 @@ import java.io.FileOutputStream
 import java.security.MessageDigest
 
 internal val VIDEO_ID = Regex("[A-Za-z0-9_-]{11}")
-internal const val LIBRARY_LIMIT = 2L * 1024 * 1024 * 1024
+internal const val LIBRARY_LIMIT = 10L * 1024 * 1024 * 1024
 internal const val FREE_RESERVE = 1024L * 1024 * 1024
-internal enum class PreparationStatus { WAITING, DOWNLOADING, READY, ERROR }
+internal enum class PreparationStatus { WAITING, DOWNLOADING, READY, ERROR, DELETED }
 internal data class LocalTrack(val name: String, val bytes: Long, val sha256: String)
 internal data class PreparedEntry(
     val id: String, val status: PreparationStatus = PreparationStatus.WAITING,
     val title: String = "", val duration: Long = 0, val bytes: Long = 0,
     val total: Long = 0, val error: String = "", val tracks: List<LocalTrack> = emptyList(),
+    val phase: String = "", val totalKnown: Boolean = false,
 )
 internal data class PreparationState(
     val enabled: Boolean = false, val paused: Boolean = false,
     val plan: List<String> = emptyList(), val entries: Map<String, PreparedEntry> = emptyMap(),
     val storageError: Boolean = false,
+    val deleting: List<String> = emptyList(), val operationError: String = "",
 )
 internal class PreparedStore(val directory: File) {
     private val index = File(directory, "index.json")
@@ -42,9 +44,13 @@ internal class PreparedStore(val directory: File) {
                 } }
                 val status = PreparationStatus.valueOf(e.getString("status"))
                 id to PreparedEntry(id, if (status == PreparationStatus.DOWNLOADING) PreparationStatus.WAITING else status,
-                    e.optString("title"), e.optLong("duration"), e.optLong("bytes"), e.optLong("total"), e.optString("error"), tracks)
+                    e.optString("title"), e.optLong("duration"), e.optLong("bytes"), e.optLong("total"), e.optString("error"), tracks, e.optString("phase"), e.optBoolean("totalKnown")).let { entry ->
+                        if (status == PreparationStatus.DOWNLOADING) entry.copy(bytes = 0, total = 0, totalKnown = false, tracks = emptyList(), phase = "WAITING") else entry
+                    }
             } }
-            PreparationState(root.getBoolean("enabled"), root.optBoolean("paused"), plan, entries)
+            PreparationState(root.getBoolean("enabled"), root.optBoolean("paused"), plan, entries,
+                deleting = root.optJSONArray("deleting")?.let { a -> List(a.length()) { a.getString(it).also { id -> require(VIDEO_ID.matches(id)) } } }.orEmpty(),
+                operationError = root.optString("operationError"))
         } catch (_: Exception) { PreparationState(storageError = true) }
     }
     fun write(s: PreparationState) {
@@ -53,9 +59,9 @@ internal class PreparedStore(val directory: File) {
         s.entries.values.forEach { e ->
             val tracks = JSONArray(); e.tracks.forEach { t -> tracks.put(JSONObject().put("name", t.name).put("bytes", t.bytes).put("sha256", t.sha256)) }
             entries.put(JSONObject().put("id", e.id).put("status", e.status.name).put("title", e.title).put("duration", e.duration)
-                .put("bytes", e.bytes).put("total", e.total).put("error", e.error).put("tracks", tracks))
+                .put("bytes", e.bytes).put("total", e.total).put("error", e.error).put("tracks", tracks).put("phase", e.phase).put("totalKnown", e.totalKnown))
         }
-        val root = JSONObject().put("enabled", s.enabled).put("paused", s.paused).put("plan", JSONArray(s.plan)).put("entries", entries)
+        val root = JSONObject().put("enabled", s.enabled).put("paused", s.paused).put("plan", JSONArray(s.plan)).put("entries", entries).put("deleting", JSONArray(s.deleting)).put("operationError", s.operationError)
         val temporary = File(directory, "index.tmp")
         FileOutputStream(temporary).use { it.write(root.toString().toByteArray()); it.fd.sync() }
         check(temporary.renameTo(index)) { "Preparation index write failed" }
@@ -65,6 +71,13 @@ internal class PreparedStore(val directory: File) {
         f.isFile && f.length() == t.bytes && sha256(f) == t.sha256
     }
     fun delete(id: String) { listOf(track(id), track(id, true)).forEach { it.delete(); File(it.path + ".part").delete() } }
+    fun mediaIds(): Set<String> = directory.listFiles().orEmpty().map { it.name }
+        .filter { it.matches(Regex("[A-Za-z0-9_-]{11}[.](video|audio)[.]mp4([.]part)?")) }.map { it.substringBefore('.') }.toSet()
+    fun deleteChecked(id: String) {
+        listOf(track(id), track(id, true)).flatMap { listOf(it, File(it.path + ".part")) }.forEach { file ->
+            check(!file.exists() || file.delete()) { "DELETE_FAILED" }
+        }
+    }
     fun usedBytes(): Long = directory.listFiles().orEmpty().filter { it.name.endsWith(".mp4") || it.name.endsWith(".part") }.sumOf { it.length() }
 }
 internal fun sha256(file: File): String = MessageDigest.getInstance("SHA-256").let { digest ->

@@ -392,6 +392,23 @@ class PlaybackCoordinatorTest {
         coordinator.close()
     }
 
+    @Test
+    fun failedFullClearPreservesQueueAndDoesNotStopPlayer() = runTest {
+        val source = FakeSource(); val player = FakePlayer(); val store = MemoryStore()
+        val c = coordinator(source, store, player)
+        c.start(); c.add("video000001"); c.play(); advanceUntilIdle()
+        val before = c.currentSnapshot(); val stops = player.stopCount
+        store.failWrites = true
+        try {
+            c.clearAll(before.queueState.version)
+            org.junit.Assert.fail("Storage error must be reported")
+        } catch (_: java.io.IOException) { }
+        assertEquals(before, c.currentSnapshot())
+        assertEquals(stops, player.stopCount)
+        store.failWrites = false
+        c.close()
+    }
+
     private fun TestScope.coordinator(
         source: FakeSource,
         store: MemoryStore,
@@ -433,8 +450,10 @@ private class FakeSource : YouTubeSource {
 
 private class MemoryStore(initial: QueueState = QueueState.Empty) : QueueStore {
     var state = initial
+    var failWrites = false
     override fun read(): QueueState = state
     override fun write(state: QueueState) {
+        if (failWrites) throw java.io.IOException("synthetic storage failure")
         this.state = state
     }
 }
@@ -449,6 +468,7 @@ private class FakePlayer : PlaybackPlayer {
     val prepareCalls = mutableListOf<PrepareCall>()
     var positionMs = 0L
     var pauseCount = 0
+    var stopCount = 0
 
     override fun setListener(listener: PlaybackPlayer.Listener) = Unit
 
@@ -467,7 +487,7 @@ private class FakePlayer : PlaybackPlayer {
         pauseCount++
     }
 
-    override fun stop() = Unit
+    override fun stop() { stopCount++ }
     override fun currentPositionMs(): Long = positionMs
     override fun release() = Unit
 

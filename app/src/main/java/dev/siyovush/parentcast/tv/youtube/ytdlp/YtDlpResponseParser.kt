@@ -62,6 +62,9 @@ class YtDlpResponseParser {
             url = url,
             mimeType = if (isVideo) "video/mp4" else "audio/mp4",
             headers = allowedHeaders(node.get("http_headers") ?: root.get("http_headers")),
+            sizeBytes = node.get("filesize")?.asLong()?.takeIf { it > 0 }
+                ?: runCatching { URI(url).rawQuery.orEmpty().split('&').firstOrNull { it.startsWith("clen=") }
+                    ?.substringAfter('=')?.toLongOrNull()?.takeIf { it > 0 } }.getOrNull(),
         )
     }
 

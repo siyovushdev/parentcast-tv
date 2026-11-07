@@ -131,6 +131,7 @@ function renderState() {
     if (!state) return;
     byId("playerStatus").textContent = statusNames[state.status] || state.status;
     byId("currentTitle").textContent = state.currentTitle || "Ролик не выбран";
+    byId("displayMessage").textContent = state.displayReady === false ? "На телевизоре открыт другой экран. Для просмотра откройте ParentCast; очередь и загрузки можно готовить здесь." : "";
     const current = state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
     byId("queueSummary").textContent = `Элемент ${current}/${state.items.length}; позиция ${Math.floor(state.positionMs / 1000)} с; intent ${state.intent}; версия ${state.queueVersion}`;
     byId("updatedAt").textContent = `Обновлено плеером: ${new Date(state.updatedAtMs).toLocaleString()}`;
@@ -138,37 +139,84 @@ function renderState() {
     byId("diagnostics").textContent = state.diagnostics || "";
     renderQueue();
     renderPrepared();
+    if (state.connectUrls) byId("homeConnectUrls").textContent = "Адреса пульта: " + state.connectUrls.join(" · ");
     updateSelectionControls();
 }
 
 function renderPrepared() {
     const s = state && state.prepared;
     if (!s) return;
-    byId("preparedSummary").textContent = `${s.enabled ? "Локальный режим" : "Потоковый режим"}${s.paused ? "; подготовка остановлена" : ""}. Готово ${s.ready} из ${s.count}.${s.storageError ? " Ошибка хранилища подготовки." : ""}`;
+    const gib = bytes => (Number(bytes || 0) / 1073741824).toFixed(1);
+    const used = Number(s.usedBytes || 0) < 1073741824 ? (Number(s.usedBytes || 0) / 1048576).toFixed(1) + " МиБ" : gib(s.usedBytes) + " ГиБ";
+    byId("preparedSummary").textContent = `${s.enabled ? "Локальный режим" : "Потоковый режим"}${s.paused ? "; подготовка остановлена" : ""}. Готово ${s.ready} из ${s.count}.${s.storageError ? " Ошибка хранилища подготовки." : ""}${s.clearing ? " Удаляем файлы…" : ""}${s.operationError ? " Не удалось удалить файлы; повторите после проверки хранилища." : ""}`;
+    byId("preparedStorage").textContent = `Скачано ${used} из ${gib(s.limitBytes)} ГиБ. Свободно на приставке ${gib(s.freeBytes)} ГиБ; резерв ${gib(s.reserveBytes)} ГиБ. Можно скачать ещё ${gib(s.additionalBytes)} ГиБ.`;
     const rows = byId("preparedEntries");
     rows.replaceChildren();
-    const names = {WAITING: "Ожидает загрузки", DOWNLOADING: "Подготовка", READY: "Готово", ERROR: "Ошибка"};
-    const errors = {YOUTUBE_AUTH_REQUIRED: "YouTube требует авторизацию. Включите действующую тестовую сессию на ТВ и повторите подготовку", NO_SPACE: "Недостаточно места в лимите / свободного места", UNSUPPORTED: "Нужен публичный завершённый ролик", DOWNLOAD_FAILED: "Загрузка не завершена. Проверьте сеть и повторите", FILE_DAMAGED: "Файл повреждён. Повторите загрузку"};
+    const names = {WAITING: "В очереди загрузки", DOWNLOADING: "Скачивание", READY: "Готово", ERROR: "Ошибка", DELETED: "Файл удалён", DELETING: "Удаляем файл"};
+    const phases = {INFO: "Получаем данные о ролике", VIDEO: "Загружаем видео", AUDIO: "Загружаем звук", VERIFY: "Проверяем загрузку"};
+    const errors = {YOUTUBE_AUTH_REQUIRED: "YouTube требует авторизацию. Включите действующую тестовую сессию на ТВ и повторите подготовку", NO_SPACE: "Недостаточно места в лимите / свободного места", UNSUPPORTED: "Нужен публичный завершённый ролик", DOWNLOAD_FAILED: "Загрузка прервана. Проверьте сеть и нажмите «Повторить ошибки»", FILE_DAMAGED: "Файл повреждён. Повторите загрузку"};
     s.entries.forEach(e => {
-        const row = document.createElement("p");
-        row.textContent = `${e.index}. ${e.title || e.videoId} — ${names[e.status] || e.status}; ${(e.bytes / 1048576).toFixed(1)} МиБ${e.error ? "; " + (errors[e.error] || e.error) : ""}`;
+        const row = document.createElement("div");
+        row.className = "download-row";
+        const label = document.createElement("p");
+        const known = Number.isFinite(e.percent);
+        const size = `${(e.bytes / 1048576).toFixed(1)}${Number.isFinite(e.totalBytes) ? " / " + (e.totalBytes / 1048576).toFixed(1) : ""} МиБ`;
+        label.textContent = `${e.index}. ${e.title || e.videoId} — ${names[e.status] || e.status}${e.status === "DOWNLOADING" ? ": " + (phases[e.phase] || "Подготовка") : ""}; ${known ? e.percent + "% · " : ""}${size}${e.error ? "; " + (errors[e.error] || e.error) : ""}`;
+        const progress = document.createElement("progress");
+        progress.max = 100;
+        if (known) progress.value = e.percent;
+        else progress.removeAttribute("value");
+        progress.hidden = !known && e.status !== "DOWNLOADING";
+        progress.setAttribute("aria-label", `Готовность ролика ${e.index}`);
+        row.append(label, progress);
+        if (e.status === "READY" || e.status === "DOWNLOADING") row.append(preparedDeleteButton(e.videoId));
         rows.append(row);
+    });
+    const files = byId("preparedFiles"); files.replaceChildren();
+    (s.files || []).forEach(e => {
+        const row = document.createElement("p");
+        row.textContent = `${e.title || e.videoId} — ${(e.bytes / 1048576).toFixed(1)} МиБ${e.inQueue ? "; в очереди" : "; вне очереди"}`;
+        if (!e.deleting) row.append(preparedDeleteButton(e.videoId));
+        files.append(row);
+    });
+    document.querySelectorAll("[data-prepared]").forEach(button => {
+        if (button.dataset.prepared === "RETRY_DELETE") { button.hidden = !s.operationError; button.disabled = busyActions.has("preparation"); }
+        else button.disabled = s.clearing || busyActions.has("preparation");
     });
     if (s.enabled && state.status === "LOADING") byId("playerStatus").textContent = "Ожидание полностью подготовленного файла";
 }
 
-async function preparationAction(action) {
+function preparedDeleteButton(id) {
+    const button = document.createElement("button");
+    button.className = "secondary"; button.textContent = "Удалить файл";
+    button.dataset.preparedDelete = id;
+    button.disabled = Boolean(state && state.prepared && state.prepared.clearing) || busyActions.has("preparation");
+    return button;
+}
+
+async function clearAllQueue() {
+    if (!state || !confirm("Остановить воспроизведение и очистить всю очередь, включая историю? Скачанные файлы и сохранённые подборки останутся.")) return;
+    return withBusy("clear-all", () => perform(`clear-all-${commandKey()}`, "/api/queue/clear-all", {queueVersion: state.queueVersion, idempotencyKey: commandKey()}));
+}
+
+async function preparationAction(action, videoId) {
     if (!state) return;
+    if ((action === "DELETE" || action === "DELETE_ALL") && !confirm(action === "DELETE_ALL"
+        ? "Остановить ролик и удалить все скачанные видео? Очередь, подборки, PIN и доступы браузеров останутся. Для просмотра потребуется новая подготовка."
+        : "Удалить скачанный файл ролика? Если он текущий, воспроизведение остановится. Подготовка будет приостановлена. Очередь и подборки останутся.")) return;
     return withBusy("preparation", async () => {
         byId("preparedMessage").textContent = "Отправка команды…";
         try {
-            await perform(`preparation-${commandKey()}`, "/api/prepared", {action, queueVersion: state.queueVersion, idempotencyKey: commandKey()});
+            const payload = {action, queueVersion: state.queueVersion, idempotencyKey: commandKey()};
+            if (videoId) payload.videoId = videoId;
+            if (action === "DELETE" || action === "DELETE_ALL") payload.stopPlayback = true;
+            await perform(`preparation-${commandKey()}`, "/api/prepared", payload);
             byId("preparedMessage").textContent = "Команда подготовки принята";
             await refreshState();
         } catch (error) {
             byId("preparedMessage").textContent = `Команда не подтверждена: ${apiErrorText(error)}`;
             throw error;
-        }
+        } finally { renderPrepared(); }
     });
 }
 
@@ -227,6 +275,8 @@ function apiErrorText(error) {
         COLLECTION_NOT_FOUND: "Подборка уже удалена. Обновите список сохранённых подборок.",
         PREVIEW_BUSY: "Приставка уже получает несколько списков. Дождитесь завершения или отмените другой предпросмотр и повторите.",
         COMMAND_STORAGE_LIMIT: "Достигнут лимит сохранённых команд. Повторите позже.",
+        OPEN_PLAYER_ON_TV: "Для просмотра сначала откройте ParentCast на телевизоре. Очередь и подготовка доступны из пульта.",
+        FILE_IN_USE: "Ролик используется плеером. Сначала остановите его и подтвердите удаление заново.",
         PREPARATION_BUSY_OR_STORAGE_ERROR: "Подготовка ещё занята или хранилище недоступно. Остановите подготовку, дождитесь завершения отмены и повторите.",
     };
     const code = error.data && error.data.error;
@@ -682,6 +732,7 @@ byId("retryCommandButton").addEventListener("click", () => run(() => {
 byId("pairButton").addEventListener("click", () => run(pair));
 byId("addButton").addEventListener("click", () => run(addLinks));
 byId("playNowButton").addEventListener("click", () => run(playNow));
+byId("clearAllButton").addEventListener("click", () => run(clearAllQueue));
 byId("clearPendingButton").addEventListener("click", () => run(clearPending));
 byId("playlistPreviewButton").addEventListener("click", () => run(startPreview));
 byId("playlistCancelButton").addEventListener("click", () => run(cancelPreview));
@@ -718,6 +769,10 @@ byId("queue").addEventListener("click", event => {
     if (button) run(() => queueAction(button.dataset.action, button.dataset.id));
 });
 
+["preparedEntries", "preparedFiles"].forEach(id => byId(id).addEventListener("click", event => {
+    const button = event.target.closest("button[data-prepared-delete]");
+    if (button) run(() => preparationAction("DELETE", button.dataset.preparedDelete));
+}));
 document.querySelectorAll("[data-prepared]").forEach(button => {
     button.addEventListener("click", () => run(() => preparationAction(button.dataset.prepared)));
 });
