@@ -105,7 +105,19 @@ function showFamilyPage(page,scroll=true){
     if(page==="settings"||page==="add")run(refreshStorage);
 }
 function showAddSource(source){byId("onlineImport").hidden=source!=="link";byId("localSection").hidden=source!=="local";document.querySelectorAll("[data-add-source]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.addSource===source)));}
-function nextProgrammeItem(){if(!state)return null;const item=state.items[state.currentIndex];const group=(state.groups||[]).find(g=>g.id===state.activeGroupId);if(group){const index=group.videoIds.indexOf(item?.videoId);return index>=0?state.items.find(e=>e.videoId===group.videoIds[index+1])||null:null;}return state.items[state.currentIndex+1]||null;}
+function nextProgrammeItem(){
+    if(!state)return null;
+    if(state.programme&&Object.prototype.hasOwnProperty.call(state.programme,"nextVideoId"))
+        return state.items.find(item=>item.videoId===state.programme.nextVideoId)||null;
+    const item=state.items[state.currentIndex],group=(state.groups||[]).find(g=>g.id===state.activeGroupId);
+    if(group){const index=group.videoIds.indexOf(item?.videoId);return index>=0?state.items.find(e=>e.videoId===group.videoIds[index+1])||null:null;}
+    return state.items[state.currentIndex+1]||null;
+}
+function nextProgrammeGroup(){
+    if(!state)return null;
+    const id=state.programme&&Object.prototype.hasOwnProperty.call(state.programme,"nextGroupId")?state.programme.nextGroupId:state.activeGroupId;
+    return (state.groups||[]).find(group=>group.id===id)||null;
+}
 function renderFamilyState(){
     if(!state||!byId("nowTitle"))return;
     const current=state.items[state.currentIndex],next=nextProgrammeItem(),group=(state.groups||[]).find(g=>g.id===state.activeGroupId);
@@ -113,7 +125,7 @@ function renderFamilyState(){
     byId("nowTitle").textContent=state.currentTitle||current?.title||"Ролик не выбран";
     byId("nowNext").textContent=next?"Далее: "+(next.title||"Название ещё не получено"):current?"В конце программы — остановка":"Добавьте выбранные вами видео";
     byId("nextVideoTitle").textContent=next?.title||(next?"Название ещё не получено":"В конце программы — остановка");
-    byId("nextVideoMeta").textContent=next?[group?.name,formatDuration(next.durationSeconds),typeof videoReady==="function"&&videoReady(next)?"Скачано":"Ещё не скачано"].filter(Boolean).join(" · "):"";
+    byId("nextVideoMeta").textContent=next?[nextProgrammeGroup()?.name,formatDuration(next.durationSeconds),typeof videoReady==="function"&&videoReady(next)?"Скачано":"Ещё не скачано"].filter(Boolean).join(" · "):"";
     const canStart=!!current&&(typeof videoCanWatch!=="function"||videoCanWatch(current));
     const toggle=byId("nowToggle");toggle.textContent=state.intent==="PLAY"?"Пауза":canStart?"Продолжить":"Не готово";toggle.dataset.familyPlayback=state.intent==="PLAY"?"PAUSE_RESUME":"PLAY";toggle.disabled=!current||(state.intent!=="PLAY"&&!canStart);
     byId("resumePlayback").disabled=!canStart;
@@ -127,7 +139,7 @@ function renderFamilyState(){
 }
 
 function isPlaylistLink(text){try{const u=new URL(text);const host=u.hostname.toLowerCase();return ((host==="youtube.com"||host.endsWith(".youtube.com")||host==="youtu.be")&&u.searchParams.has("list"))||((host==="vkvideo.ru"||host==="vk.com"||host==="m.vk.com")&&(/^\/playlist\//.test(u.pathname)||u.searchParams.has("pl")||u.searchParams.has("z")));}catch(_){return false;}}
-async function beginFamilyImport(){const link=byId("playlistUrl").value.trim();if(!link)return;importSingleLink="";if(isPlaylistLink(link)){await startPreview();}else{if(preview)await cancelPreview();importSingleLink=link;byId("singleVideoLink").textContent=link;importStep=3;syncImportFlow();}}
+async function beginFamilyImport(){const link=byId("playlistUrl").value.trim();if(!link)return;importSingleLink="";if(isPlaylistLink(link)){if(typeof cancelVideoPreview==="function")await cancelVideoPreview();await startPreview();}else{if(preview)await cancelPreview();importSingleLink=link;byId("singleVideoLink").textContent=link;importStep=3;syncImportFlow();if(typeof beginVideoPreview==="function")await beginVideoPreview(link);}}
 function resetFamilyImport(){previewOrder=[];previewOrderId=null;previewOrderWasReady=false;importStep=1;importSingleLink="";}
 function ensurePreviewOrder(){if(!preview)return;const indices=(preview.entries||[]).map(e=>e.index);if(previewOrderId!==preview.previewId){previewOrderId=preview.previewId;previewOrder=indices;byId("playlistOrderMode").value="source";importStep=previewCanApply()?2:1;}else{const valid=new Set(indices);previewOrder=previewOrder.filter(i=>valid.has(i));for(const i of indices)if(!previewOrder.includes(i))previewOrder.push(i);if(previewCanApply()&&!previewOrderWasReady)importStep=2;}previewOrderWasReady=!!previewCanApply();}
 function orderedPreviewEntries(){ensurePreviewOrder();const entries=new Map((preview?.entries||[]).map(e=>[e.index,e]));return previewOrder.map(i=>entries.get(i)).filter(Boolean);}
@@ -212,7 +224,7 @@ async function mutateStorage(action){if(storageBusy||!storageState)return;const 
     storageBusy=true;renderStorage();try{const payload={action,storageVersion:storageState.storageVersion,idempotencyKey:commandKey()};if(["SELECT","MIGRATE"].includes(action))payload.storageId=id;if(action==="CONFIRM_CLEANUP")Object.assign(payload,{confirm:true,stopPlayback:true,queueVersion:state.queueVersion});await perform("storage-"+commandKey(),"/api/storage",payload);await refreshStorage();byId("storageMessage").textContent=action==="SELECT"?"Хранилище для новых загрузок выбрано.":"Операция принята. Состояние показано ниже.";}catch(error){byId("storageMessage").textContent=storageErrorText(error.data?.error)||apiErrorText(error);await refreshStorage();}finally{storageBusy=false;renderStorage();}}
 
 initializeFamilyLayout();
-byId("controlSection").addEventListener("click",event=>{const button=event.target.closest("button");if(!button)return;if(button.dataset.familyPlayback){run(()=>playback(button.dataset.familyPlayback));return;}if(button.dataset.addSource){showAddSource(button.dataset.addSource);return;}const action=button.dataset.familyAction;if(action==="page")showFamilyPage(button.dataset.page);if(action==="add"){showFamilyPage("add");showAddSource("link");}if(action==="close-add")showFamilyPage("library");if(action==="move-preview"){const index=Number(button.dataset.previewIndex);const at=previewOrder.indexOf(index);const to=button.dataset.move==="up"?at-1:button.dataset.move==="down"?at+1:Number(button.parentElement.querySelector("input").value)-1;movePreviewEntry(index,to);}});
+byId("controlSection").addEventListener("click",event=>{const button=event.target.closest("button");if(!button)return;if(button.dataset.familyPlayback){run(()=>playback(button.dataset.familyPlayback));return;}if(button.dataset.addSource){showAddSource(button.dataset.addSource);return;}const action=button.dataset.familyAction;if(action==="page")showFamilyPage(button.dataset.page);if(action==="add"){showFamilyPage("add");showAddSource("link");}if(action==="close-add"){if(typeof cancelVideoPreview==="function")run(cancelVideoPreview);showFamilyPage("library");}if(action==="move-preview"){const index=Number(button.dataset.previewIndex);const at=previewOrder.indexOf(index);const to=button.dataset.move==="up"?at-1:button.dataset.move==="down"?at+1:Number(button.parentElement.querySelector("input").value)-1;movePreviewEntry(index,to);}});
 byId("themeSelect").addEventListener("change",()=>{setFamilyTheme(byId("themeSelect").value);saveFamilyView();});
 byId("playlistOrderMode").addEventListener("change",()=>changePreviewOrder(byId("playlistOrderMode").value));
 byId("importReviewButton").addEventListener("click",()=>{importStep=3;syncImportFlow();run(refreshStorage);});

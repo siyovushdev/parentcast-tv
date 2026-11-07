@@ -31,7 +31,9 @@ class YtDlpYouTubeSource(
     private val parser = YtDlpResponseParser()
     private val cookieFile = File(appContext.filesDir, "youtube-cookies.txt")
 
-    override suspend fun resolve(videoId: String): ResolvedVideo = withContext(Dispatchers.IO) {
+    override suspend fun resolve(videoId: String): ResolvedVideo = parser.parse(fetch(videoId),videoId)
+    internal suspend fun preview(videoId:String)=dev.siyovush.parentcast.tv.media.VideoQualities.parse(fetch(videoId),videoId)
+    private suspend fun fetch(videoId: String): com.fasterxml.jackson.databind.JsonNode = withContext(Dispatchers.IO) {
         require(Regex("[A-Za-z0-9_-]{11}").matches(videoId))
         runtime.ensureInitialized()
         val processId = "parentcast-${UUID.randomUUID()}"
@@ -51,7 +53,7 @@ class YtDlpYouTubeSource(
                     throw YouTubeSourceException(PlaybackFailure(PlaybackErrorKind.UNSUPPORTED, diagnostic = "UNSUPPORTED"))
                 }
             }
-            parser.parse(root, videoId)
+            root
         } catch (error: CancellationException) {
             throw error
         } catch (error: YoutubeDL.CanceledException) {

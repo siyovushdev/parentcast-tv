@@ -63,6 +63,8 @@ open class MainActivity : Activity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var playerRoot: View
+    private lateinit var childLibrary: ChildLibraryView
+    private var childBrowseRequested = false
     private lateinit var debugRoot: View
     private lateinit var playerStatus: TextView
     private lateinit var debugStatus: TextView
@@ -126,6 +128,7 @@ open class MainActivity : Activity() {
         override fun run() {
             if (debugVisible) renderConnectInfo()
             if (debugVisible && !parentGate.authorized()) showPlayer()
+            if(ownerReady && childLibrary.visibility==View.VISIBLE)renderChildLibrary(coordinator.currentSnapshot())
             handler.postDelayed(this, SAVE_INTERVAL_MS)
         }
     }
@@ -149,6 +152,15 @@ open class MainActivity : Activity() {
 
 
         playerRoot = layoutInflater.inflate(R.layout.activity_player, null)
+        childLibrary = ChildLibraryView(this,::openChildGroup) { groupId, complete ->
+            val runtime=serviceRuntime
+            val group=latestSnapshot.queueState.groups.find { it.id==groupId }
+            if(runtime!=null && group!=null)scope.launch {
+                val image=runCatching { runtime.childCover(group) }.getOrNull()
+                if(!retired)complete(image)
+            } else complete(null)
+        }.apply { visibility=View.GONE }
+        (playerRoot as android.widget.FrameLayout).addView(childLibrary,android.widget.FrameLayout.LayoutParams(-1,-1))
         debugRoot = layoutInflater.inflate(R.layout.activity_debug, null)
         playerStatus = playerRoot.findViewById(R.id.playerStatus)
         debugStatus = debugRoot.findViewById(R.id.debugStatus)
@@ -260,6 +272,8 @@ open class MainActivity : Activity() {
                     }
                 } else if (event.action == KeyEvent.ACTION_UP && heldParentKey == event.keyCode) {
                     heldParentKey = null; handler.removeCallbacks(parentHold)
+                    if(event.keyCode==KeyEvent.KEYCODE_DPAD_CENTER && childLibrary.visibility==View.VISIBLE)
+                        childLibrary.findFocus()?.performClick()
                 }
                 return true
             }
@@ -307,6 +321,17 @@ open class MainActivity : Activity() {
     private fun handleParentBack() {
         if (!ownerReady) return
         if (parentDialog != null) parentDialog?.dismiss() else if (debugVisible) showPlayer()
+        else if(latestSnapshot.queueState.childScreen.enabled) {
+            if(childLibrary.visibility==View.VISIBLE) {
+                if(latestSnapshot.queueState.currentItem!=null && latestSnapshot.queueState.intent!=dev.siyovush.parentcast.tv.queue.PlaybackIntent.STOP) {
+                    childBrowseRequested=false;renderChildLibrary(latestSnapshot)
+                }
+            } else {
+                childBrowseRequested=true
+                if(latestSnapshot.queueState.intent==dev.siyovush.parentcast.tv.queue.PlaybackIntent.PLAY)coordinator.pauseResume()
+                renderChildLibrary(latestSnapshot)
+            }
+        }
         // Leaving the player requires the authenticated Launcher exit, including when HOME is off.
     }
 
@@ -701,6 +726,7 @@ open class MainActivity : Activity() {
     private fun render(snapshot: CoordinatorSnapshot) {
         latestSnapshot = snapshot
         if (!ownerReady || retired) return
+        if(snapshot.queueState.intent==dev.siyovush.parentcast.tv.queue.PlaybackIntent.PLAY)childBrowseRequested=false
         val playerMessage = when (snapshot.status) {
             PlaybackStatus.IDLE -> getString(R.string.player_waiting)
             PlaybackStatus.WAITING_FOR_SESSION -> getString(R.string.player_waiting_session)
@@ -733,6 +759,40 @@ open class MainActivity : Activity() {
         }
         diagnostics.text = snapshot.diagnostics
         renderQueue(snapshot)
+        renderChildLibrary(snapshot)
+    }
+
+    private fun renderChildLibrary(snapshot:CoordinatorSnapshot) {
+        val q=snapshot.queueState
+        val show=!debugVisible && q.childScreen.enabled && (childBrowseRequested || q.intent==dev.siyovush.parentcast.tv.queue.PlaybackIntent.STOP || q.finished || q.items.isEmpty())
+        val appeared=show && childLibrary.visibility!=View.VISIBLE
+        childLibrary.visibility=if(show)View.VISIBLE else View.GONE
+        if(!q.childScreen.enabled)childBrowseRequested=false
+        if(!show)return
+        val allowed=q.childScreen.groupIds.toSet()
+        childLibrary.render(q.groups.filter { it.id in allowed }.map { group ->
+            val first=if(q.activeGroupId==group.id && !q.finished && q.positionMs>0)q.currentItem?.videoId else group.videoIds.firstOrNull()
+            ChildPlaylistCard(group.id,group.name,group.videoIds.count { preparedLibrary.mediaReadiness(it)=="READY" },group.videoIds.size,
+                first!=null && preparedLibrary.mediaReadiness(first)=="READY",group.coverImageId ?: group.coverVideoId ?: group.videoIds.first())
+        })
+        if(appeared)childLibrary.focusFirst()
+    }
+
+    private fun openChildGroup(id:String) {
+        if(!ownerReady || debugVisible || retired)return
+        val q=coordinator.currentSnapshot().queueState
+        if(!q.childScreen.enabled || id !in q.childScreen.groupIds)return
+        val group=q.groups.find { it.id==id } ?: return
+        val resume=q.activeGroupId==id && !q.finished && q.positionMs>0
+        val item=if(resume)q.currentItem else q.items.find { it.videoId==group.videoIds.first() }
+        if(item==null || item.videoId !in group.videoIds || preparedLibrary.mediaReadiness(item.videoId)!="READY") {
+            android.widget.Toast.makeText(this,"Программа ещё готовится. Выберите другую или попросите родителя.",android.widget.Toast.LENGTH_SHORT).show();return
+        }
+        childBrowseRequested=false
+        // Selecting a child programme also clears a parent's one-off next-video override.
+        // Otherwise a pending video outside the approved programme could play at its end.
+        coordinator.selectQueued(item.queueItemId,q.version,if(resume)q.positionMs else 0,true,
+            "child-"+java.util.UUID.randomUUID(),"child-select:$id:${item.videoId}:${q.version}",id)
     }
 
     private fun renderQueue(snapshot: CoordinatorSnapshot) {

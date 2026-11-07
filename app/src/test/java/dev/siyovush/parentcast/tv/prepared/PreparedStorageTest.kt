@@ -1,6 +1,9 @@
 package dev.siyovush.parentcast.tv.prepared
 
 import dev.siyovush.parentcast.tv.youtube.*
+import dev.siyovush.parentcast.tv.playback.*
+import dev.siyovush.parentcast.tv.queue.*
+import dev.siyovush.parentcast.tv.web.CallDispatcher
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.*
 import org.junit.Assert.*
@@ -36,6 +39,36 @@ class PreparedStorageTest {
     },TrackDownloader { _,target,_,progress -> target.writeText("new");progress(3,3);LocalTrack(target.name,3,sha256(target)) },scope,{_,_,_->})
     private fun command(name:String)=StorageCommand(name,"fingerprint-$name")
 
+    @Test fun catalogueResponseUsesOneFreshVolumeSnapshotAndHonoursNextRequestRemoval() = runTest {
+        val f=fixture();val store=f.store();store.storage.select(cardId,0)
+        val ids=(1..21).map { "video%06d".format(it) }
+        ids.forEach { store.claim(it);ready(store,it) }
+        store.write(store.read().copy(plan=ids,enabled=true))
+        val library=library(store,this)
+        val player=object:PlaybackPlayer {
+            override fun setListener(listener:PlaybackPlayer.Listener){}
+            override fun prepare(generation:Long,video:ResolvedVideo,positionMs:Long,playWhenReady:Boolean){}
+            override fun play(){};override fun pause(){};override fun stop(){}
+            override fun currentPositionMs()=0L;override fun release(){}
+        }
+        val queue=AtomicQueueStore(File(f.inside,"queue.json"));queue.write(QueueState(items=ids.map { QueueItem(it,it) },currentIndex=0))
+        val coordinator=PlaybackCoordinator(object:YouTubeSource{override suspend fun resolve(videoId:String):ResolvedVideo=error("No download")},queue,player,this)
+        val api=PreparedApi(library,coordinator,object:CallDispatcher{override fun <T> call(block:()->T)=block()})
+        var observations=0;f.intercept={observations++}
+        try {
+            val response=api.state();assertEquals(1,observations);assertEquals(21,response.getInt("ready"))
+            assertEquals(21,response.getJSONArray("files").length())
+            f.writable=false;observations=0
+            assertEquals(21,api.state().getInt("ready"));assertEquals(1,observations)
+            assertEquals("STORAGE_READ_ONLY",assertThrows(StorageUnavailable::class.java){library.storage.root(cardId,true)}.code)
+            f.mounted=false;observations=0
+            val removed=api.state();assertEquals(1,observations);assertEquals(0,removed.getInt("ready"))
+            assertEquals("STORAGE_UNAVAILABLE",removed.getJSONArray("entries").getJSONObject(0).getString("status"))
+            assertFalse(removed.getJSONArray("files").getJSONObject(0).getBoolean("available"))
+            assertEquals(21,library.snapshot().entries.values.count { it.status==PreparationStatus.READY })
+            assertEquals(21,f.card.listFiles().orEmpty().count { it.name.endsWith(".mp4") })
+        } finally { coordinator.close() }
+    }
     @Test fun legacyIndexAndFilesRemainInternalUntilExplicitSelection() {
         val f=fixture();val store=f.store();val entry=ready(store)
         assertEquals(INTERNAL_STORAGE,store.storage.selectedId());assertTrue(store.verify(entry))
@@ -123,7 +156,7 @@ class PreparedStorageTest {
         assertTrue(store.verify(entry));assertTrue(store.storage.retained().isEmpty())
     }
     @Test fun failedCopyKeepsOriginalAndDoesNotPublishTarget() = runTest {
-        val f=fixture();val store=f.store();val entry=ready(store,text="x".repeat(300_000));val library=library(store,this)
+        val f=fixture();val store=f.store();val entry=ready(store,text="x".repeat(9*1024*1024));val library=library(store,this)
         f.intercept={ if(f.card.listFiles().orEmpty().any { it.name.endsWith(".copying") && it.length()>0 }) f.writable=false }
         library.migrateStorage(cardId,0,command("migrate"));advanceUntilIdle()
         assertEquals("ERROR",store.storage.migration().status);assertEquals("STORAGE_READ_ONLY",store.storage.migration().error)
@@ -150,7 +183,7 @@ class PreparedStorageTest {
         assertEquals("COMPLETE",store.storage.migration().status)
     }
     @Test fun cancellationDuringCopyRemovesOnlyNewStagingAndKeepsSource() = runTest {
-        val f=fixture();val store=f.store();val entry=ready(store,text="x".repeat(300_000));val library=library(store,this)
+        val f=fixture();val store=f.store();val entry=ready(store,text="x".repeat(9*1024*1024));val library=library(store,this)
         var cancelled=false
         f.intercept={
             if(!cancelled && f.card.listFiles().orEmpty().any { it.name.endsWith(".copying") && it.length()>0 }) {
@@ -240,6 +273,33 @@ class PreparedStorageTest {
         }
         assertEquals(3L,target.length());assertEquals(0L,store.storage.usedBytes(INTERNAL_STORAGE))
     }
+    @Test fun eachMediaOrCacheWriteUsesOneFreshExternalVolumeSnapshot() {
+        val f=fixture();val store=f.store();store.storage.select(cardId,0);store.claim(video)
+        val target=store.track(video);val budget=MediaBudget(f.inside,storage=store.storage)
+        var observations=0;f.intercept={observations++}
+        FileOutputStream(target).use { out->
+            budget.write(out,byteArrayOf(1,2),2,target);assertEquals(1,observations)
+            budget.writeCache(cardId,2){out.write(byteArrayOf(3,4))};assertEquals(2,observations)
+        }
+        assertEquals(4L,target.length())
+    }
+    @Test fun nextWriteImmediatelyHonoursReadonlyRemovalAndCapacityChanges() {
+        val f=fixture();val store=f.store();store.storage.select(cardId,0);store.claim(video)
+        val target=store.track(video);val budget=MediaBudget(f.inside,storage=store.storage)
+        FileOutputStream(target).use { out->
+            budget.write(out,byteArrayOf(1,2),2,target)
+            f.writable=false
+            assertEquals("STORAGE_READ_ONLY",assertThrows(StorageUnavailable::class.java){budget.write(out,byteArrayOf(3),1,target)}.code)
+            assertEquals("STORAGE_READ_ONLY",assertThrows(StorageUnavailable::class.java){budget.writeCache(cardId,1){out.write(3)}}.code)
+            f.writable=true;f.mounted=false
+            assertEquals("STORAGE_UNAVAILABLE",assertThrows(StorageUnavailable::class.java){budget.write(out,byteArrayOf(3),1,target)}.code)
+            assertEquals("STORAGE_UNAVAILABLE",assertThrows(StorageUnavailable::class.java){budget.writeCache(cardId,1){out.write(3)}}.code)
+            f.mounted=true;f.total=FREE_RESERVE+2
+            assertEquals("NO_SPACE",assertThrows(IllegalStateException::class.java){budget.write(out,byteArrayOf(3),1,target)}.message)
+            assertEquals("NO_SPACE",assertThrows(IllegalStateException::class.java){budget.writeCache(cardId,1){out.write(3)}}.message)
+            assertEquals(2L,target.length())
+        }
+    }
     @Test fun untrustedVolumePathsAndSymlinksCannotEscapeAppStorage() {
         val f=fixture();val store=f.store()
         assertThrows(IllegalArgumentException::class.java) { store.storage.select("../../elsewhere",0) }
@@ -251,6 +311,27 @@ class PreparedStorageTest {
         assertEquals("keep",outside.readText())
         assertThrows(IllegalStateException::class.java) { store.storage.select(cardId,999) }
         assertEquals(INTERNAL_STORAGE,store.storage.selectedId())
+    }
+    @Test fun cacheBytesCountNestedSpansAndIgnoreSymlinkTargetsOutsideCache() {
+        val f=fixture();val store=f.store()
+        val cache=File(f.card,"stream-cache").apply {mkdir()}
+        val spans=File(cache,"0").apply {mkdir()}
+        File(spans,"span.v3.exo").writeBytes(ByteArray(4096))
+        File(cache,"index-data").writeBytes(ByteArray(17))
+        File(f.card,"local.video.mp4").writeBytes(ByteArray(100))
+        val outside=temporary.newFile("outside-cache").apply {writeBytes(ByteArray(9000))}
+        val link=File(spans,"external.v3.exo").toPath()
+        java.nio.file.Files.createSymbolicLink(link,outside.toPath())
+        try {
+            assertEquals(4213L,PreparedStorage.mediaBytes(f.card))
+            assertEquals(4213L,store.storage.usedBytes(cardId))
+            assertEquals(9000L,outside.length())
+        }finally {java.nio.file.Files.delete(link)}
+        val otherRoot=temporary.newFolder("cache-link-root")
+        val directoryLink=File(otherRoot,"stream-cache").toPath()
+        java.nio.file.Files.createSymbolicLink(directoryLink,cache.toPath())
+        try {assertEquals(0L,PreparedStorage.mediaBytes(otherRoot))}
+        finally {java.nio.file.Files.delete(directoryLink)}
     }
     @Test fun corruptRoutingJournalFailsClosedWithoutDeletingExistingMedia() {
         val f=fixture();val store=f.store();val entry=ready(store)

@@ -1,5 +1,6 @@
 package dev.siyovush.parentcast.tv.playback
 
+import dev.siyovush.parentcast.tv.queue.*
 import dev.siyovush.parentcast.tv.queue.QueueGroup
 import dev.siyovush.parentcast.tv.queue.cleanVideoTitle
 import dev.siyovush.parentcast.tv.queue.BatchAddResult
@@ -32,6 +33,7 @@ class PlaybackCoordinator(
     private val localSource: YouTubeSource? = null,
 ) : PlaybackPlayer.Listener {
     private var state = QueueState.Empty
+    private var committedState = QueueState.Empty
     private var status = PlaybackStatus.IDLE
     private var currentTitle = ""
     private var diagnostics = ""
@@ -55,6 +57,7 @@ class PlaybackCoordinator(
             storageWarning = true
             QueueState.Empty
         }
+        committedState = state
     }
 
     fun setListener(listener: (CoordinatorSnapshot) -> Unit) {
@@ -66,11 +69,11 @@ class PlaybackCoordinator(
         if (started || closed) return
         started = true
         player.setListener(this)
-        val startupState = StartupPlaybackPolicy.restore(state, autoResumeOnStartup)
+        var startupState = StartupPlaybackPolicy.restore(state, autoResumeOnStartup)
         if (startupState != state) {
             try {
                 // Commit the safe intent before any extraction can be scheduled.
-                store.write(startupState)
+                startupState = commitState(startupState)
             } catch (_: Exception) {
                 state = startupState
                 storageWarning = true
@@ -94,7 +97,7 @@ class PlaybackCoordinator(
 
     fun add(videoId: String) {
         if (closed) return
-        val updated = state.add(QueueItem(UUID.randomUUID().toString(), videoId))
+        var updated = state.add(QueueItem(UUID.randomUUID().toString(), videoId))
         if (updated == state) return
         state = updated
         if (status == PlaybackStatus.IDLE) status = PlaybackStatus.STOPPED
@@ -114,7 +117,7 @@ class PlaybackCoordinator(
     /** One queue transaction; no player calls and no change of playback intent. */
     fun addBatch(videoIds: List<String>, expectedVersion: Long, commandKey: String, requestFingerprint: String? = null, local: Boolean = false, group: QueueGroup? = null, titles: Map<String,String> = emptyMap()): BatchAddResult {
         require(videoIds.size in 1..500 && videoIds.all { if(local) Regex("local_[0-9a-f]{32}").matches(it) else dev.siyovush.parentcast.tv.media.OnlineMediaIds.isOnline(it) })
-        require(group == null || group.videoIds == videoIds.distinct())
+        require(group == null || group.videoIds.containsAll(videoIds.distinct()))
         require(titles.keys.all { it in videoIds } && titles.values.all { it == cleanVideoTitle(it) })
         require(commandKey.length in 8..300)
         if (closed) return BatchAddResult.STORAGE_ERROR
@@ -127,15 +130,18 @@ class PlaybackCoordinator(
             return if (it.fingerprint == fingerprint) BatchAddResult.REPLAY else BatchAddResult.KEY_REUSED
         }
         if (state.version != expectedVersion) return BatchAddResult.CONFLICT
+        require(group == null || group.videoIds.all { id -> id in videoIds || state.items.any { it.videoId == id } })
         if (receipts.size >= 1000) return BatchAddResult.RECEIPT_LIMIT
         val seen = state.items.mapTo(mutableSetOf()) { it.videoId }
         val items = videoIds.filter { seen.add(it) }.map { QueueItem(UUID.randomUUID().toString(), it, local, titles[it].orEmpty()) }
         val allItems = (state.items + items).map { item -> titles[item.videoId]?.let { item.copy(title = it) } ?: item }
-        val groups = if (group == null) state.groups else if(state.groups.any { it.id == group.id }) state.groups.map { if(it.id == group.id) group else it } else state.groups + group
+        val previousGroup=group?.let { incoming -> state.groups.find { it.id==incoming.id } }
+        val incomingGroup=group?.let { incoming -> previousGroup?.let { old -> incoming.copy(favorite=old.favorite,coverImageId=old.coverImageId,coverVideoId=old.coverVideoId?.takeIf { it in incoming.videoIds }) } ?: incoming }
+        val groups = if (incomingGroup == null) state.groups else if(previousGroup!=null) state.groups.map { if(it.id == incomingGroup.id) incomingGroup else it } else state.groups + incomingGroup
         if (groups.size > 100) return BatchAddResult.RECEIPT_LIMIT
         val addition = QueueAddition(items.size, videoIds.size - items.size, group?.id)
         val changed = allItems != state.items || groups != state.groups
-        val updated = state.copy(
+        var updated = state.copy(
             items = allItems,
             groups = groups,
             currentIndex = if (state.items.isEmpty() && items.isNotEmpty()) 0 else state.currentIndex,
@@ -143,7 +149,7 @@ class PlaybackCoordinator(
             batchReceipts = receipts + BatchReceipt(commandKey, fingerprint, now, addition),
         )
         try {
-            store.write(updated)
+            updated = commitState(updated)
         } catch (_: Exception) {
             storageWarning = true
             emit()
@@ -153,6 +159,41 @@ class PlaybackCoordinator(
         if (status == PlaybackStatus.IDLE) status = PlaybackStatus.STOPPED
         emit()
         return BatchAddResult.APPLIED
+    }
+
+    /** Authenticated programme commands share the queue's atomic receipt and version transaction. */
+    fun programmeCommand(command: ProgrammeCommand, expectedVersion: Long, key: String, fingerprint: String): BatchAddResult {
+        if(closed)return BatchAddResult.STORAGE_ERROR
+        batchReplay(key,fingerprint)?.let { return it }
+        if(state.version!=expectedVersion)return BatchAddResult.CONFLICT
+        val now=System.currentTimeMillis()
+        val receipts=state.batchReceipts.filter { now-it.createdAtMs<=86_400_000L }
+        if(receipts.size>=1000)return BatchAddResult.RECEIPT_LIMIT
+        val previousCurrent=state.currentItem?.queueItemId
+        val updated=state.applyProgramme(command).copy(version=state.version+1,batchReceipts=receipts+BatchReceipt(key,fingerprint,now))
+        try { state=commitState(updated, programmeLabel(command), command !is ProgrammeCommand.Undo) }
+        catch(_:Exception){storageWarning=true;emit();return BatchAddResult.STORAGE_ERROR}
+        if(previousCurrent!=state.currentItem?.queueItemId) {
+            invalidateRequest();currentTitle="";diagnostics="";error=null;status=PlaybackStatus.STOPPED
+        }
+        emit();return BatchAddResult.APPLIED
+    }
+    private fun programmeLabel(command: ProgrammeCommand): String = when(command) {
+        is ProgrammeCommand.ReorderLoose -> "Порядок отдельных видео"
+        is ProgrammeCommand.CreateGroup -> "Создание плейлиста"
+        is ProgrammeCommand.UpdateGroup -> "Настройки плейлиста"
+        is ProgrammeCommand.Membership -> "Состав плейлиста"
+        is ProgrammeCommand.RemoveVideos -> "Удаление из программы"
+        is ProgrammeCommand.Favorite -> "Избранное"
+        else -> "Изменение программы"
+    }
+    private fun commitState(next: QueueState, label: String = "Изменение программы", undoable: Boolean = true): QueueState {
+        val before=committedState.structure()
+        val after=next.structure()
+        val updated=if(undoable && before!=after)next.copy(undo=ProgrammeUndo("u_"+UUID.randomUUID().toString().replace("-",""),label,before,after.fingerprint())) else next
+        store.write(updated)
+        committedState=updated
+        return updated
     }
 
     private fun currentNeedsYouTubeSession(): Boolean = state.currentItem?.let {
@@ -209,7 +250,7 @@ class PlaybackCoordinator(
 
     fun next() {
         if (closed || state.items.isEmpty()) return
-        state = state.next()
+        state = captureProgress(state).next()
         currentTitle = ""
         diagnostics = ""
         error = null
@@ -240,8 +281,8 @@ class PlaybackCoordinator(
 
     fun clearAll(expectedVersion: Long): Boolean {
         if (closed || state.version != expectedVersion) return false
-        val cleared = QueueState.Empty.copy(version = state.version + 1, batchReceipts = state.batchReceipts)
-        store.write(cleared)
+        var cleared = QueueState.Empty.copy(version = state.version + 1, batchReceipts = state.batchReceipts, progress=state.progress, favorites=state.favorites, childScreen=ChildScreen(state.childScreen.enabled))
+        cleared = commitState(cleared)
         state = cleared
         invalidateRequest()
         currentTitle = ""; diagnostics = ""; error = null
@@ -252,7 +293,7 @@ class PlaybackCoordinator(
 
     fun deletePending(queueItemId: String) {
         if (closed) return
-        val updated = state.deletePending(queueItemId)
+        var updated = state.deletePending(queueItemId)
         if (updated == state) return
         state = updated
         persist()
@@ -261,7 +302,7 @@ class PlaybackCoordinator(
 
     fun playNow(videoId: String) {
         if (closed) return
-        state = state.playNow(QueueItem(UUID.randomUUID().toString(), videoId))
+        state = captureProgress(state).playNow(QueueItem(UUID.randomUUID().toString(), videoId))
         currentTitle = ""
         diagnostics = ""
         error = null
@@ -285,9 +326,9 @@ class PlaybackCoordinator(
         require(groupId == null || state.groups.any { it.id == groupId && state.items[index].videoId in it.videoIds })
         val now=System.currentTimeMillis();val receipts=state.batchReceipts.filter { now-it.createdAtMs<=86_400_000 }
         if(receipts.size>=1000)return BatchAddResult.RECEIPT_LIMIT
-        val updated=state.copy(currentIndex=index,activeGroupId=groupId,positionMs=positionMs,intent=if(play)PlaybackIntent.PLAY else PlaybackIntent.STOP,
-            finished=false,version=state.version+1,batchReceipts=receipts+BatchReceipt(key,fingerprint,now))
-        try {store.write(updated)} catch (_:Exception){return BatchAddResult.STORAGE_ERROR}
+        var updated=captureProgress(state).copy(currentIndex=index,activeGroupId=groupId,positionMs=positionMs,intent=if(play)PlaybackIntent.PLAY else PlaybackIntent.STOP,
+            finished=false,playNext=null,version=state.version+1,batchReceipts=receipts+BatchReceipt(key,fingerprint,now))
+        try {updated = commitState(updated)} catch (_:Exception){return BatchAddResult.STORAGE_ERROR}
         state=updated;invalidateRequest();currentTitle="";diagnostics="";error=null;refreshAttempted=false;status=PlaybackStatus.STOPPED;emit()
         if(play)prepareCurrent()
         return BatchAddResult.APPLIED
@@ -309,9 +350,9 @@ class PlaybackCoordinator(
         }
         val now = System.currentTimeMillis(); val receipts = state.batchReceipts.filter { now-it.createdAtMs <= 86_400_000 }
         if (receipts.size >= 1000) return BatchAddResult.RECEIPT_LIMIT
-        val updated = state.copy(groups = groups, version = state.version + if(groups == state.groups) 0 else 1,
+        var updated = state.copy(groups = groups, version = state.version + if(groups == state.groups) 0 else 1,
             batchReceipts = receipts + BatchReceipt(key,fingerprint,now))
-        try { store.write(updated) } catch (_: Exception) { return BatchAddResult.STORAGE_ERROR }
+        try { updated = commitState(updated) } catch (_: Exception) { return BatchAddResult.STORAGE_ERROR }
         state = updated; emit(); return BatchAddResult.APPLIED
     }
 
@@ -331,10 +372,11 @@ class PlaybackCoordinator(
         val index=if(items.isEmpty()) -1 else if(currentRemains) items.indexOfFirst { it.queueItemId==current?.queueItemId } else state.currentIndex.coerceAtMost(items.lastIndex)
         val now=System.currentTimeMillis();val receipts=state.batchReceipts.filter {now-it.createdAtMs<=86_400_000}
         if(receipts.size>=1000)return BatchAddResult.RECEIPT_LIMIT
-        val updated=state.copy(items=items,groups=groups,currentIndex=index,activeGroupId=if(stop)null else state.activeGroupId,
+        var updated=state.copy(items=items,groups=groups,currentIndex=index,activeGroupId=if(stop)null else state.activeGroupId,
             positionMs=if(currentRemains)state.positionMs else 0,intent=if(stop)PlaybackIntent.STOP else state.intent,
-            finished=if(items.isEmpty() || stop)false else state.finished,version=state.version+1,batchReceipts=receipts+BatchReceipt(key,fingerprint,now))
-        try {store.write(updated)} catch (_:Exception){return BatchAddResult.STORAGE_ERROR}
+            finished=if(items.isEmpty() || stop)false else state.finished,
+            childScreen=state.childScreen.copy(groupIds=state.childScreen.groupIds.filter { it!=groupId }),playNext=state.playNext?.takeIf { next -> items.any { it.videoId==next.videoId } },version=state.version+1,batchReceipts=receipts+BatchReceipt(key,fingerprint,now))
+        try {updated = commitState(updated)} catch (_:Exception){return BatchAddResult.STORAGE_ERROR}
         state=updated
         if(stop){invalidateRequest();currentTitle="";diagnostics="";error=null;status=PlaybackStatus.STOPPED}
         emit();return BatchAddResult.APPLIED
@@ -351,9 +393,9 @@ class PlaybackCoordinator(
         val receipts = state.batchReceipts.filter { now - it.createdAtMs <= 86_400_000 }
         if(receipts.size >= 1000) return BatchAddResult.RECEIPT_LIMIT
         val byId = pending.associateBy { it.queueItemId }
-        val updated = state.copy(items = state.items.take(state.currentIndex + 1) + ids.map { byId.getValue(it) }, version = state.version + 1,
+        var updated = state.copy(items = state.items.take(state.currentIndex + 1) + ids.map { byId.getValue(it) }, version = state.version + 1,
             batchReceipts = receipts + BatchReceipt(key,fingerprint,now))
-        try { store.write(updated) } catch (_: Exception) { return BatchAddResult.STORAGE_ERROR }
+        try { updated = commitState(updated) } catch (_: Exception) { return BatchAddResult.STORAGE_ERROR }
         state = updated
         emit()
         return BatchAddResult.APPLIED
@@ -361,7 +403,7 @@ class PlaybackCoordinator(
 
     fun movePending(queueItemId: String, moveUp: Boolean) {
         if (closed) return
-        val updated = state.movePending(queueItemId, moveUp)
+        var updated = state.movePending(queueItemId, moveUp)
         if (updated == state) return
         state = updated
         persist()
@@ -370,7 +412,7 @@ class PlaybackCoordinator(
 
     fun clearPending() {
         if (closed) return
-        val updated = state.clearPending()
+        var updated = state.clearPending()
         if (updated == state) return
         state = updated
         persist()
@@ -383,10 +425,10 @@ class PlaybackCoordinator(
         val duration=player.durationMs()
         if(startupStorageBlocked || state.finished || state.intent==PlaybackIntent.STOP || preparedItemId!=itemId || !player.isSeekable() || duration==null)return SeekResult.UNAVAILABLE
         require(positionMs in 0..duration)
-        val previous=state.withPosition(player.currentPositionMs())
+        var previous=state.withPosition(player.currentPositionMs())
         val target=positionMs.coerceAtMost((duration-1).coerceAtLeast(0))
-        val updated=previous.withPosition(target).copy(version=state.version+1)
-        try {store.write(updated)} catch(_:Exception){storageWarning=true;emit();return SeekResult.STORAGE_ERROR}
+        var updated=previous.withPosition(target).copy(version=state.version+1)
+        try {updated = commitState(updated)} catch(_:Exception){storageWarning=true;emit();return SeekResult.STORAGE_ERROR}
         val previousStatus=status
         state=updated
         // An in-buffer seek may keep playing without a new onPlaying event. Real player
@@ -395,7 +437,7 @@ class PlaybackCoordinator(
             else if(state.intent==PlaybackIntent.PLAY) PlaybackStatus.BUFFERING else PlaybackStatus.PAUSED
         try {player.seekTo(target)} catch(_:Exception){
             state=previous;status=previousStatus
-            return try {store.write(previous);emit();SeekResult.FAILED} catch(_:Exception){storageWarning=true;emit();SeekResult.STORAGE_ERROR}
+            return try {previous = commitState(previous);emit();SeekResult.FAILED} catch(_:Exception){storageWarning=true;emit();SeekResult.STORAGE_ERROR}
         }
         emit();return SeekResult.APPLIED
     }
@@ -403,8 +445,26 @@ class PlaybackCoordinator(
     fun savePosition() {
         val current = state.currentItem ?: return
         if (preparedItemId != current.queueItemId || state.finished) return
-        state = state.withPosition(player.currentPositionMs())
-        store.write(state)
+        state = captureProgress(state)
+        state = commitState(state)
+    }
+
+    private fun captureProgress(original: QueueState, completed: Boolean = false): QueueState {
+        val item=original.currentItem ?: return original
+        if(preparedItemId!=item.queueItemId)return original
+        val previous=original.progress[item.videoId] ?: VideoProgress()
+        val duration=player.durationMs()?.coerceAtLeast(0) ?: previous.durationMs
+        val position=if(completed && duration>0)duration else player.currentPositionMs().coerceAtLeast(0)
+        val watched=if(completed)VideoWatchStatus.WATCHED else if(position>0)VideoWatchStatus.IN_PROGRESS else previous.status
+        val progress=previous.copy(positionMs=position,durationMs=duration,status=watched,
+            lastPlayedAtMs=if(completed || original.intent==PlaybackIntent.PLAY || position!=previous.positionMs)System.currentTimeMillis() else previous.lastPlayedAtMs)
+        val history=original.progress.toMutableMap()
+        if(item.videoId !in history && history.size>=10_000) {
+            val oldest=history.filter { it.value.bookmarks.isEmpty() && it.key !in original.favorites }.minByOrNull { it.value.lastPlayedAtMs }?.key
+            if(oldest!=null)history.remove(oldest) else return original.withPosition(position)
+        }
+        history[item.videoId]=progress
+        return original.withPosition(position).copy(progress=history)
     }
 
     fun close() {
@@ -416,7 +476,9 @@ class PlaybackCoordinator(
 
     override fun onEnded(generation: Long) {
         if (!isCurrentPlayerRequest(generation)) return
-        state = state.next()
+        val stopping = state.stopAfterCurrent
+        state = captureProgress(state, completed = true).next()
+        if(stopping)state=state.copy(intent=PlaybackIntent.STOP,stopAfterCurrent=false)
         currentTitle = ""
         diagnostics = ""
         error = null
@@ -574,7 +636,7 @@ class PlaybackCoordinator(
 
     private fun persist() {
         state = state.copy(version = state.version + 1)
-        store.write(state)
+        state = commitState(state)
         startupStorageBlocked = false
     }
 
@@ -594,6 +656,7 @@ class PlaybackCoordinator(
         storageWarning = storageWarning,
         updatedAtMs = updatedAtMs,
         durationMs = if(preparedItemId!=null && preparedItemId==state.currentItem?.queueItemId)player.durationMs() else null,
+        bufferedPositionMs = if(preparedItemId!=null && preparedItemId==state.currentItem?.queueItemId)player.bufferedPositionMs() else null,
         seekable = preparedItemId!=null && preparedItemId==state.currentItem?.queueItemId && !state.finished && state.intent!=PlaybackIntent.STOP && player.isSeekable(),
     )
 }

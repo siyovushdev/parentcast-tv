@@ -27,6 +27,7 @@ internal data class PreparationState(
     val storageError: Boolean = false,
     val targetGroupId: String? = null,
     val deleting: List<String> = emptyList(), val operationError: String = "",
+    val explicitSelection: Boolean = false,
 )
 internal class PreparedStore(val directory: File, storageProvider: (() -> List<MediaVolume>)? = null, internalLimit: Long = LIBRARY_LIMIT) {
     private val index = File(directory, "index.json")
@@ -66,7 +67,7 @@ internal class PreparedStore(val directory: File, storageProvider: (() -> List<M
             PreparationState(root.getBoolean("enabled"), root.optBoolean("paused"), plan, entries,storageError = !storage.healthy(),
                 targetGroupId = root.optString("targetGroupId").takeUnless { it.isBlank() || it=="null" },
                 deleting = root.optJSONArray("deleting")?.let { a -> List(a.length()) { a.getString(it).also { id -> require(MEDIA_ID.matches(id)) } } }.orEmpty(),
-                operationError = root.optString("operationError"))
+                operationError = root.optString("operationError"), explicitSelection = root.optBoolean("explicitSelection"))
         } catch (_: Exception) { PreparationState(storageError = true) }
     }
     fun write(s: PreparationState) {
@@ -77,7 +78,7 @@ internal class PreparedStore(val directory: File, storageProvider: (() -> List<M
             entries.put(JSONObject().put("id", e.id).put("status", e.status.name).put("title", e.title).put("duration", e.duration)
                 .put("bytes", e.bytes).put("total", e.total).put("error", e.error).put("tracks", tracks).put("phase", e.phase).put("totalKnown", e.totalKnown).put("local", e.local).put("mime", e.mime).put("attempts", e.attempts).put("retryAtMs", e.retryAtMs))
         }
-        val root = JSONObject().put("resumeVersion",1).put("targetGroupId",s.targetGroupId ?: JSONObject.NULL).put("enabled", s.enabled).put("paused", s.paused).put("plan", JSONArray(s.plan)).put("entries", entries).put("deleting", JSONArray(s.deleting)).put("operationError", s.operationError)
+        val root = JSONObject().put("explicitSelection",s.explicitSelection).put("resumeVersion",1).put("targetGroupId",s.targetGroupId ?: JSONObject.NULL).put("enabled", s.enabled).put("paused", s.paused).put("plan", JSONArray(s.plan)).put("entries", entries).put("deleting", JSONArray(s.deleting)).put("operationError", s.operationError)
         val temporary = File(directory, "index.tmp")
         FileOutputStream(temporary).use { it.write(root.toString().toByteArray()); it.fd.sync() }
         check(temporary.renameTo(index)) { "Preparation index write failed" }

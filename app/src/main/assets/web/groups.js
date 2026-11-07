@@ -9,11 +9,12 @@ const groupSourceNames = {YOUTUBE_PLAYLIST: "YouTube · плейлист", VK_PL
 function videoReady(item) {
     if(item.preparationStatus === "STORAGE_UNAVAILABLE" || item.preparationStatus === "STORAGE_BUSY")return false;
     if(item.ready === false)return false;
-    return item.ready === true || (state.prepared?.files || []).some(e => e.videoId === item.videoId) ||
+    return item.ready === true || (state.prepared?.files || []).some(e => e.videoId === item.videoId && e.available!==false) ||
         (state.prepared?.entries || []).some(e => e.videoId === item.videoId && e.status === "READY");
 }
 function videoCanWatch(item) {
     if(item.preparationStatus === "STORAGE_UNAVAILABLE" || item.preparationStatus === "STORAGE_BUSY")return false;
+    if(item.canStream===true)return true;
     return videoReady(item) || (!state.prepared?.enabled && !item.local && !item.videoId.startsWith("vk:"));
 }
 function unavailableWatchLabel(item) {
@@ -36,8 +37,10 @@ function playlistRow(item, index, groupId) {
     text.append(title,meta);appendVideoThumbnail(text,item.videoId,item.title);row.append(text);
     const watch = document.createElement("button");watch.className = "secondary";
     watch.dataset.groupAction = "watch-video";watch.dataset.groupId = groupId || "";watch.dataset.itemId = item.queueItemId;
-    watch.textContent = videoCanWatch(item) ? (current && state.positionMs>0 && !state.finished ? `Продолжить с ${resumeTime(state.positionMs)}` : "Смотреть") : unavailableWatchLabel(item);
+    const resume=typeof videoResumeMs==="function"?videoResumeMs(item):current&&!state.finished?state.positionMs:0;
+    watch.textContent = videoCanWatch(item) ? (resume>0 ? `Продолжить с ${resumeTime(resume)}` : "Смотреть") : unavailableWatchLabel(item);
     watch.disabled = groupRequestBusy || !videoCanWatch(item);row.append(watch);
+    if(typeof enhanceVideoRow==="function")enhanceVideoRow(row,item,groupId);
     return row;
 }
 function groupButton(text, action, id) {
@@ -48,11 +51,11 @@ let libraryGroupId = null;
 function groupElement(tag,className,text) {const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node;}
 function libraryMembers(group) {return group.videoIds.map(id=>state.items.find(e=>e.videoId===id)).filter(Boolean);}
 function programmeCatalogue() {
-    const groups=state.groups||[],assigned=new Set(groups.flatMap(g=>g.videoIds));
-    const ungrouped=state.items.filter(e=>!assigned.has(e.videoId));
+    const groups=state.programme?.groups||state.groups||[],assigned=new Set(groups.flatMap(g=>g.videoIds));
+    const ungrouped=state.programme?state.programme.looseVideoIds.map(id=>state.items.find(e=>e.videoId===id)).filter(Boolean):state.items.filter(e=>!assigned.has(e.videoId));
     return [...groups,...(ungrouped.length?[{id:"ungrouped",name:"Отдельные видео",source:"LOOSE",videoIds:ungrouped.map(e=>e.videoId)}]:[])];
 }
-function groupCover(group,members) {const box=groupElement("div","library-cover");if(members[0])appendVideoThumbnail(box,members[0].videoId,group.name);else box.textContent="Плейлист";return box;}
+function groupCover(group,members) {const box=groupElement("div","library-cover");if(group.coverImageId&&typeof appendCustomCover==="function")appendCustomCover(box,group.coverImageId,group.name);else if(group.coverVideoId||members[0])appendVideoThumbnail(box,group.coverVideoId||members[0].videoId,group.name);else box.textContent="Плейлист";return box;}
 function renderProgrammeGroups() {
     const groups=programmeCatalogue();
     const query=(byId("librarySearch")?.value||"").trim().toLocaleLowerCase("ru");
@@ -62,14 +65,14 @@ function renderProgrammeGroups() {
     byId("editQueueOrder").hidden=!!selected&&selected.id!=="ungrouped" || (!selected&&(state.groups||[]).length>0);
     byId("clearPendingButton").hidden=(state.groups||[]).length>0;
     if(byId("libraryBack"))byId("libraryBack").hidden=!selected;
-    const key=JSON.stringify([libraryGroupId,query,readyOnly,state.groups,state.activeGroupId,state.currentIndex,state.prepared?.enabled,groupRequestBusy,
+    const key=JSON.stringify([libraryGroupId,query,readyOnly,state.groups,state.programme?.groups,state.programme?.videos?.map(v=>[v.videoId,v.favorite,v.status]),state.programme?.looseVideoIds,state.activeGroupId,state.currentIndex,state.prepared?.enabled,groupRequestBusy,
         state.items.map(e=>[e.queueItemId,e.title,e.ready,e.preparationStatus,e.durationSeconds]),(state.prepared?.entries||[]).map(e=>[e.videoId,e.status])]);
     if(programmeViewKey===key) {
         byId("queue").querySelectorAll('button[data-group-action="watch-video"]').forEach(button=>{
             const item=state.items.find(e=>e.queueItemId===button.dataset.itemId);
             if(item)button.textContent=!videoCanWatch(item)?unavailableWatchLabel(item):
                 (state.items[state.currentIndex]?.queueItemId===item.queueItemId&&((state.activeGroupId||"")===(button.dataset.groupId||""))&&state.positionMs>0&&!state.finished?`Продолжить с ${resumeTime(state.positionMs)}`:"Смотреть");
-        });return;
+        });if(typeof updateExperienceRows==="function")updateExperienceRows();return;
     }
     programmeViewKey=key;
     const container=byId("queue");container.replaceChildren();
@@ -77,15 +80,17 @@ function renderProgrammeGroups() {
         const grid=groupElement("div","library-grid");
         for(const group of groups) {
             const members=libraryMembers(group),ready=members.filter(videoReady).length;
+            if(byId("libraryFilter")?.value==="favorite"&&!group.favorite&&!members.some(item=>state.programme?.videos?.find(v=>v.videoId===item.videoId)?.favorite))continue;
             if(readyOnly&&ready!==members.length)continue;
             if(query&&!group.name.toLocaleLowerCase("ru").includes(query)&&!members.some(e=>(e.title||"").toLocaleLowerCase("ru").includes(query)))continue;
             const card=groupElement("button","library-card");card.type="button";card.dataset.openGroup=group.id;
             const duration=members.every(e=>Number.isFinite(e.durationSeconds))?formatDuration(members.reduce((sum,e)=>sum+e.durationSeconds,0)):"длительность уточняется";
-            card.append(groupCover(group,members),groupElement("h3","",group.name),groupElement("p","small muted",`${members.length} видео · ${duration}`));
+            card.append(groupCover(group,members),groupElement("h3","",`${group.favorite?"★ ":""}${group.name}`),groupElement("p","small muted",`${members.length} видео · ${duration}`));
             const bar=groupElement("div","library-progress"),fill=groupElement("span");fill.style.width=(members.length?100*ready/members.length:0)+"%";bar.append(fill);card.append(bar,groupElement("span","badge",ready===members.length?"Всё скачано":`${ready} из ${members.length} скачано`));grid.append(card);
         }
         container.append(grid);
         if(!grid.children.length)container.append(groupElement("p","empty-library",state.items.length?"Ничего не найдено. Измените поиск или фильтр.":"Здесь появятся ваши плейлисты. Нажмите «Добавить» и выберите видео для детей."));
+        if(typeof enhanceLibrary==="function")enhanceLibrary(null,container);
         return;
     }
     const members=libraryMembers(selected),index=(state.groups||[]).findIndex(g=>g.id===selected.id),realGroup=selected.id!=="ungrouped";
@@ -103,6 +108,7 @@ function renderProgrammeGroups() {
     }
     container.append(groupElement("p","muted small","Это сохранённый порядок просмотра. Приоритет скачивания его не меняет. В конце выбранного плейлиста — остановка."));
     members.forEach((item,n)=>{if(!query||selected.name.toLocaleLowerCase("ru").includes(query)||(item.title||"").toLocaleLowerCase("ru").includes(query))container.append(playlistRow(item,n,realGroup?selected.id:null));});
+    if(typeof enhanceLibrary==="function")enhanceLibrary(selected,container);
 }
 async function programmeAction(button) {
     if(groupRequestBusy || !state)return;
@@ -125,7 +131,8 @@ async function programmeAction(button) {
                 ((state.activeGroupId || "") === (id || "")) && state.positionMs>0 && !state.finished) {
                 await perform("resume-video-"+commandKey(),"/api/playback",{action:"PLAY",idempotencyKey:commandKey()});return;
             }
-            await perform("watch-playlist-"+commandKey(),"/api/queue/select",{queueItemId:item.queueItemId,groupId:id || undefined,queueVersion:state.queueVersion,positionMs:0,play:true,idempotencyKey:commandKey()});
+            const positionMs=action==="watch-video"&&typeof videoResumeMs==="function"?videoResumeMs(item):0;
+            await perform("watch-playlist-"+commandKey(),"/api/queue/select",{queueItemId:item.queueItemId,groupId:id || undefined,queueVersion:state.queueVersion,positionMs,play:true,idempotencyKey:commandKey()});
         } else if(action === "up" || action === "down") {
             const ids=state.groups.map(g=>g.id),index=ids.indexOf(id),to=index+(action === "up"?-1:1);
             if(index<0 || to<0 || to>=ids.length)return;

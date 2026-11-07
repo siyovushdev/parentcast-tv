@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -425,7 +426,38 @@ class ApiControllerTest {
         assertTrue(f.tokenStore.verify(token) != null)
     }
 
-    private inner class Fixture(displayReady: Boolean = true) {
+    @Test fun slowCoverKeepsStopResponsiveAndSameCommandRunsOnlyOnce() {
+        val entered=java.util.concurrent.CountDownLatch(1)
+        val release=java.util.concurrent.CountDownLatch(1)
+        val calls=java.util.concurrent.atomic.AtomicInteger()
+        val f=Fixture(frame={ _,_ -> calls.incrementAndGet();entered.countDown();check(release.await(5,java.util.concurrent.TimeUnit.SECONDS));byteArrayOf(0xff.toByte(),0xd8.toByte(),0xff.toByte(),0xd9.toByte()) })
+        val token=f.pair();f.add("https://youtu.be/jNQXAC9IVRw","cover-video",token)
+        val json=JSONObject().put("videoId","jNQXAC9IVRw").put("positionMs",0).put("idempotencyKey","same-frame").toString()
+        val pool=java.util.concurrent.Executors.newFixedThreadPool(3)
+        try {
+            val first=pool.submit<ApiResponse> {f.controller.handle(request("POST","/api/covers/frame",f.auth(token),json))}
+            assertTrue(entered.await(3,java.util.concurrent.TimeUnit.SECONDS))
+            val repeated=pool.submit<ApiResponse> {f.controller.handle(request("POST","/api/covers/frame",f.auth(token),json))}
+            val stop=pool.submit<ApiResponse> {f.controller.handle(request("POST","/api/playback",f.auth(token),JSONObject().put("action","STOP").put("idempotencyKey","stop-during-cover").toString()))}
+            assertEquals(200,stop.get(2,java.util.concurrent.TimeUnit.SECONDS).code)
+            release.countDown()
+            assertEquals(200,first.get(3,java.util.concurrent.TimeUnit.SECONDS).code)
+            assertEquals(200,repeated.get(3,java.util.concurrent.TimeUnit.SECONDS).code)
+            assertEquals(1,calls.get())
+        } finally {release.countDown();pool.shutdownNow()}
+    }
+
+    @Test fun programmeAndCoverRoutesKeepTokenOriginAndHostGuards() {
+        val f=Fixture();val token=f.pair()
+        val body=JSONObject().put("action","STOP_AFTER_CURRENT").put("value",true).put("queueVersion",0).put("idempotencyKey","guard-programme").toString()
+        assertEquals(401,f.controller.handle(request("POST","/api/programme",f.auth(null),body)).code)
+        assertEquals(403,f.controller.handle(request("POST","/api/programme",f.auth(token)+("origin" to "https://untrusted.invalid"),body)).code)
+        assertEquals(421,f.controller.handle(request("GET","/api/covers/"+"a".repeat(64),f.auth(token)+("host" to "untrusted.invalid"))).code)
+        assertEquals(404,f.controller.handle(request("GET","/api/covers/"+"a".repeat(64),f.auth(token))).code)
+        assertFalse(f.coordinator.currentSnapshot().queueState.stopAfterCurrent)
+    }
+
+    private inner class Fixture(displayReady: Boolean = true, frame:(String,Long)->ByteArray? = {_,_->null}) {
         val tokenFile = file("devices.json")
         val tokenStore = AtomicTokenStore(tokenFile)
         val settings = object : PinSettings {
@@ -477,6 +509,8 @@ class ApiControllerTest {
             prepared = dev.siyovush.parentcast.tv.prepared.PreparedApi(library, coordinator, callDispatcher),
             storage = dev.siyovush.parentcast.tv.prepared.StorageApi(library, coordinator, callDispatcher),
             displayReady = { displayReady },
+            covers = PlaylistCovers(temporaryFolder.newFolder(),{it},frame),
+            programme = ProgrammeApi(coordinator,callDispatcher),
         )
 
         fun pair(): String {

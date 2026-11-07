@@ -17,7 +17,9 @@ import kotlin.coroutines.coroutineContext
 /** VK always resolves anonymously; the YouTube cookie file is never passed to this process. */
 class VkVideoSource(context: Context) : YouTubeSource {
     private val runtime = YtDlpRuntime(context.applicationContext)
-    override suspend fun resolve(videoId: String): ResolvedVideo = withContext(Dispatchers.IO) {
+    override suspend fun resolve(videoId: String): ResolvedVideo = VkVideoParser().parse(fetch(videoId),videoId)
+    internal suspend fun preview(videoId:String)=VideoQualities.parse(fetch(videoId),videoId,true)
+    private suspend fun fetch(videoId: String): JsonNode = withContext(Dispatchers.IO) {
         require(OnlineMediaIds.isVk(videoId))
         runtime.ensureInitialized()
         val id = "parentcast-vk-${UUID.randomUUID()}"
@@ -33,7 +35,7 @@ class VkVideoSource(context: Context) : YouTubeSource {
                 .addOption("-f", "bestvideo[vcodec^=avc1][height<=1080][protocol=https]+bestaudio[acodec^=mp4a][protocol=https]")
             val response = YoutubeDL.getInstance().execute(request,id,false,null)
             require(response.out.length <= 2 * 1024 * 1024)
-            VkVideoParser().parse(YoutubeDL.objectMapper.readTree(response.out),videoId)
+            YoutubeDL.objectMapper.readTree(response.out)
         } catch (e: CancellationException) { throw e }
           catch (e: YoutubeDL.CanceledException) { throw CancellationException("VK cancelled",e) }
           catch (e: InterruptedException) { throw CancellationException("VK interrupted",e) }

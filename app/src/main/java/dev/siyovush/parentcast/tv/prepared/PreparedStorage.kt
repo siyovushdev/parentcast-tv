@@ -12,6 +12,11 @@ internal data class MediaVolume(
     val mounted: Boolean = directory != null, val writable: Boolean = directory?.canWrite() == true,
     val totalBytes: Long = directory?.totalSpace ?: 0, val freeBytes: Long = directory?.usableSpace ?: 0,
 )
+/** A read-only request snapshot. Playback admission and every write still check the live volume. */
+internal class StorageAvailability(val volumes:Map<String,MediaVolume>) {
+    val available=volumes.values.filter { it.mounted && it.directory?.isDirectory==true }.map { it.id }.toSet()
+    val writable=volumes.values.filter { it.id in available && it.writable }.map { it.id }.toSet()
+}
 internal class StorageUnavailable(val code: String) : IllegalStateException(code)
 internal data class StorageCommand(val key: String, val fingerprint: String)
 internal data class RetainedOriginal(val id: String, val storageId: String, val tracks: List<LocalTrack>)
@@ -87,8 +92,23 @@ internal class PreparedStorage(
     }
     fun volume(id: String) = if(id == INTERNAL_STORAGE) MediaVolume(INTERNAL_STORAGE,"Память приставки",internalDirectory)
         else volumes().firstOrNull { it.id == id } ?: throw StorageUnavailable("STORAGE_NOT_FOUND")
-    fun limit(id: String): Long = if (id == INTERNAL_STORAGE) internalLimit else volume(id).totalBytes.let {
+    fun availability()=StorageAvailability(if(healthy())volumes().associateBy { it.id } else emptyMap())
+    fun limit(id: String): Long = if (id == INTERNAL_STORAGE) internalLimit else limit(volume(id))
+    fun limit(observed:MediaVolume):Long = if(observed.id==INTERNAL_STORAGE)internalLimit else observed.totalBytes.let {
         if (it <= FREE_RESERVE) 0 else minOf(EXTERNAL_LIBRARY_LIMIT, it - FREE_RESERVE)
+    }
+    /** One fresh framework snapshot per write; its root, writable state and capacity stay together. */
+    fun writableVolume(id:String):MediaVolume = checkedWritable(volume(id))
+    fun writableVolume(directory:File):MediaVolume {
+        val canonical=directory.canonicalFile
+        val observed=if(canonical==internalDirectory.canonicalFile)volume(INTERNAL_STORAGE)
+            else volumes().firstOrNull { it.directory?.canonicalFile==canonical } ?: throw StorageUnavailable("STORAGE_UNAVAILABLE")
+        return checkedWritable(observed)
+    }
+    private fun checkedWritable(observed:MediaVolume):MediaVolume {
+        if(!healthy())throw StorageUnavailable("STORAGE_CATALOGUE_ERROR")
+        checkedRoot(observed,true)
+        return observed
     }
     fun root(storageId: String, write: Boolean = false): File {
         if (!healthy()) throw StorageUnavailable("STORAGE_CATALOGUE_ERROR")
@@ -101,7 +121,7 @@ internal class PreparedStorage(
     }
     fun rootFor(id: String, write: Boolean = false) = root(placement(id), write)
     fun available(id: String): Boolean = runCatching { rootFor(id); true }.getOrDefault(false)
-    fun usedBytes(storageId: String): Long = runCatching { root(storageId).listFiles().orEmpty().filter(::isMediaFile).sumOf { it.length() } }.getOrDefault(0)
+    fun usedBytes(storageId: String): Long = runCatching { mediaBytes(root(storageId)) }.getOrDefault(0)
     fun allDirectories(): List<File> = volumes().filter { it.mounted && it.directory?.isDirectory == true }.mapNotNull { it.directory }
     @Synchronized fun checkVersion(expected: Long) { check(!invalid) { "STORAGE_CATALOGUE_ERROR" }; check(version == expected) { "STORAGE_CHANGED" } }
     @Synchronized fun select(id: String, expected: Long, command:StorageCommand?=null) {
@@ -178,6 +198,26 @@ internal class PreparedStorage(
         selected=selectedId;placements=routes;names=known;originals=backups;migration=nextMigration;receipts=nextReceipts;staged=staging;version++
     }
     companion object {
+        fun mediaBytes(root:File):Long = root.listFiles().orEmpty().sumOf { file ->
+            if(isMediaFile(file))file.length() else if(file.name=="stream-cache" && file.isDirectory && file.canonicalFile.parentFile==root.canonicalFile)
+                cacheBytes(file) else 0L
+        }
+        private fun cacheBytes(directory:File):Long {
+            var bytes=0L
+            // Basic attributes already contain size/type. Never resolve every span's
+            // canonical path, and never follow nested symbolic links outside the cache.
+            java.nio.file.Files.walkFileTree(directory.toPath(),object:java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                override fun visitFile(path:java.nio.file.Path,attributes:java.nio.file.attribute.BasicFileAttributes):java.nio.file.FileVisitResult {
+                    if(attributes.isRegularFile)bytes+=attributes.size()
+                    return java.nio.file.FileVisitResult.CONTINUE
+                }
+                override fun visitFileFailed(path:java.nio.file.Path,error:java.io.IOException):java.nio.file.FileVisitResult {
+                    if(error is java.nio.file.NoSuchFileException)return java.nio.file.FileVisitResult.CONTINUE
+                    throw error
+                }
+            })
+            return bytes
+        }
         fun isMediaFile(file: File) = file.isFile && (file.name.endsWith(".mp4") || file.name.endsWith(".part") || file.name.endsWith(".copying"))
         fun physicalName(id:String,name:String,external:Boolean):String {
             require(MEDIA_ID.matches(id) && name in listOf("$id.video.mp4","$id.audio.mp4"))
@@ -186,7 +226,7 @@ internal class PreparedStorage(
             return hash+name.removePrefix(id)
         }
         fun safeFile(root:File,name:String):File = File(root,name).also { check(it.canonicalFile.parentFile==root.canonicalFile) { "STORAGE_PATH_INVALID" } }
-        fun files(root:File,id:String,external:Boolean=false):List<File> = listOf("$id.video.mp4","$id.audio.mp4").flatMap { name -> val n=physicalName(id,name,external);listOf(safeFile(root,n),safeFile(root,"$n.part"),safeFile(root,"$n.resume.json"),safeFile(root,"$n.resume.json.tmp")) }
+        fun files(root:File,id:String,external:Boolean=false):List<File> = listOf("$id.video.mp4","$id.audio.mp4").flatMap { name -> val n=physicalName(id,name,external);listOf(safeFile(root,n),safeFile(root,"$n.part"),safeFile(root,"$n.stream.part"),safeFile(root,"$n.resume.json"),safeFile(root,"$n.resume.json.tmp")) }
         private fun tracksJson(tracks:List<LocalTrack>)=JSONArray().apply { tracks.forEach { put(JSONObject().put("name",it.name).put("bytes",it.bytes).put("sha256",it.sha256)) } }
         private fun readTracks(id:String,a:JSONArray)=List(a.length()) { i -> val t=a.getJSONObject(i);val name=t.getString("name");require(name in listOf("$id.video.mp4","$id.audio.mp4"));LocalTrack(name,t.getLong("bytes"),t.getString("sha256")) }
     }

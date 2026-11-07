@@ -35,15 +35,34 @@ internal class PreparedLibrary(
     private val revision = MutableStateFlow(0L)
     private var state = store.read()
     private val importing = mutableSetOf<String>()
+    private val streamingReservations = mutableSetOf<String>()
     private var storageBusy = false
     private var storageCleaning = false
+    @Volatile internal var streaming:dev.siyovush.parentcast.tv.streaming.StreamingLibrary?=null
+        private set
     @Volatile private var storageJob: Job? = null
     @Volatile private var migrationCancelRequested=false
     @Volatile private var active: Job? = null
     @Volatile private var activeId: String? = null
     @Volatile private var queueReferences: Set<String>? = null
-    init { if (state.deleting.isNotEmpty()) scope.launch { finishDeletion() } }
+    private var recoveryScheduled=false
+    init { if(!File(store.directory,"streaming-plans.json").isFile)resumeDeletionRecovery() }
+    private fun resumeDeletionRecovery() {
+        val needed=synchronized(lock){if(recoveryScheduled || state.deleting.isEmpty())false else {recoveryScheduled=true;true}}
+        if(needed)scope.launch { finishDeletion() }
+    }
+
     fun storageStats(): Pair<Long, Long> = store.usedBytes() to store.storage.volume(store.storage.selectedId()).freeBytes
+    internal fun storageAvailability()=store.storage.availability()
+    internal fun storageStats(view:StorageAvailability):Pair<Long,Long> {
+        val id=store.storage.selectedId();val volume=view.volumes[id]
+        val used=volume?.directory?.takeIf { id in view.available }?.let { budget.usedBytes(it) } ?: 0
+        return used to (volume?.freeBytes ?: 0)
+    }
+    internal fun storageLimit(view:StorageAvailability):Long {
+        val id=store.storage.selectedId()
+        return if(id==INTERNAL_STORAGE)internalLimit else view.volumes[id]?.let(store.storage::limit) ?: 0
+    }
     fun snapshot(): PreparationState = synchronized(lock) { state }
     private fun update(transform: (PreparationState) -> PreparationState) {
         synchronized(lock) { state = transform(state); revision.value++ }
@@ -63,12 +82,12 @@ internal class PreparedLibrary(
         queueReferences = queue.items.map { it.videoId }.toSet()
         val target = snapshot().targetGroupId?.let { id -> queue.groups.find { it.id == id } }
         if (snapshot().targetGroupId != null && target == null) { update { it.copy(targetGroupId = null) }; persistLater() }
-        val selected = target?.videoIds ?: queue.remainingItems().map { it.videoId }
+        val selected = if(snapshot().explicitSelection) snapshot().plan else target?.videoIds ?: queue.remainingItems().map { it.videoId }
         val urgent = if(queue.intent == dev.siyovush.parentcast.tv.queue.PlaybackIntent.PLAY) {
             if(queue.activeGroup != null) queue.remainingItems().map { it.videoId } else listOfNotNull(queue.currentItem?.videoId)
         } else emptyList()
         val online = queue.items.filterNot { it.local }.map { it.videoId }.toSet()
-        schedule((urgent + selected).distinct().filter { it in online })
+        schedule(((if(snapshot().explicitSelection) urgent.filter { it in selected } else urgent) + selected).distinct().filter { it in online })
     }
     private fun firstUnprepared(s: PreparationState) = s.plan.firstOrNull { id -> s.entries[id]?.let {
         !it.local && it.status in setOf(PreparationStatus.WAITING,PreparationStatus.RETRY_WAIT,PreparationStatus.DOWNLOADING)
@@ -86,15 +105,15 @@ internal class PreparedLibrary(
         val current = snapshot()
         if (current.enabled && !current.paused) wakeService()
     }
-    suspend fun configure(enabled: Boolean, ids: List<String>, targetGroupId: String? = null, storageId:String?=null, storageVersion:Long?=null) {
+    suspend fun configure(enabled: Boolean, ids: List<String>, targetGroupId: String? = null, storageId:String?=null, storageVersion:Long?=null, explicitSelection:Boolean=false) {
         require(ids.size <= 10_000 && ids.all(VIDEO_ID::matches))
         check(!snapshot().storageError)
         check(snapshot().deleting.isEmpty()) { "BUSY" }
         synchronized(lock) {
-        check(!storageBusy) { "BUSY" }
+        check(!storageBusy && ids.none { it in streamingReservations }) { "BUSY" }
         if(enabled && storageId!=null) store.storage.claim(ids.filter { snapshot().entries[it]?.status!=PreparationStatus.READY },storageId,storageVersion)
         if (!enabled) active?.cancel()
-        update { s -> s.copy(enabled = enabled, paused = false, plan = ids, targetGroupId = targetGroupId,
+        update { s -> s.copy(enabled = enabled, paused = false, plan = ids, targetGroupId = targetGroupId, explicitSelection=explicitSelection,
             entries = (s.entries + ids.distinct().filterNot { it in s.entries }.associateWith { PreparedEntry(it) }).mapValues { (id, e) ->
                 when {
                     enabled && id in ids && e.status == PreparationStatus.DELETED -> PreparedEntry(id, title = e.title)
@@ -121,11 +140,12 @@ internal class PreparedLibrary(
     suspend fun deleteMedia(id: String? = null) {
         check(snapshot().deleting.isEmpty()) { "BUSY" }
         require(id == null || MEDIA_ID.matches(id))
-        check(synchronized(lock) { id !in importing && !storageBusy }) { "BUSY" }
+        check(synchronized(lock) { id !in importing && !storageBusy && (if(id==null)streamingReservations.isEmpty() else id !in streamingReservations) }) { "BUSY" }
         val onlyLocal = id != null && snapshot().entries[id]?.local == true
         val targets = if (id == null) (snapshot().entries.filterValues { !it.local }.keys + (store.mediaIds().filterNot { LOCAL_ID.matches(it) }.toSet() - snapshot().entries.filterValues { it.local }.keys - synchronized(lock) { importing.toSet() })).toList() else listOf(id)
-        update { check(!storageBusy && id !in importing) { "BUSY" };it.copy(paused = if (onlyLocal) it.paused else true, deleting = targets, operationError = "") }
+        update { check(!storageBusy && id !in importing && (if(id==null)streamingReservations.isEmpty() else id !in streamingReservations)) { "BUSY" };it.copy(paused = if (onlyLocal) it.paused else true, deleting = targets, operationError = "") }
         if (!onlyLocal) active?.cancel()
+        streaming?.block(targets)
         try { persist() } catch (error: Exception) {
             update { it.copy(deleting = emptyList(), operationError = "DELETE_FAILED") }
             throw error
@@ -141,6 +161,7 @@ internal class PreparedLibrary(
         val targets = snapshot().deleting
         val deletion: suspend () -> Unit = {
         try {
+            streaming?.delete(targets)
             targets.forEach(store::deleteChecked)
             update { s -> s.copy(deleting = emptyList(), operationError = "", entries = s.entries.mapValues { (id, e) ->
                 if (id in targets) PreparedEntry(id, PreparationStatus.DELETED, title = e.title, phase = "DELETED", local = e.local, mime = e.mime) else e
@@ -160,6 +181,7 @@ internal class PreparedLibrary(
         synchronized(lock) { check(!storageBusy) { "BUSY" };storageBusy=true;admitted=true }
         val references = checkNotNull(queueReferences) { "BUSY" }
         val removable = snapshot().let { it.entries.filterValues { e -> !e.local }.keys - it.plan.toSet() - references }
+        streaming?.delete(removable)
         removable.forEach(store::delete)
         update { it.copy(entries = it.entries - removable) }; persist(); return removable.size
         } finally { if(admitted)synchronized(lock) { storageBusy=false };worker.unlock() }
@@ -173,7 +195,7 @@ internal class PreparedLibrary(
                 val s = snapshot()
                 if (!s.enabled || s.paused || s.storageError || s.deleting.isNotEmpty() || synchronized(lock) { storageBusy }) break
                 // Finish/recover the earliest pending programme item before starting a later large file.
-                val firstPending=s.plan.firstOrNull { id -> s.entries[id]?.let { !it.local && it.status in setOf(PreparationStatus.WAITING,PreparationStatus.RETRY_WAIT) }==true }
+                val firstPending=s.plan.firstOrNull { id -> id !in synchronized(lock) { streamingReservations.toSet() } && s.entries[id]?.let { !it.local && it.status in setOf(PreparationStatus.WAITING,PreparationStatus.RETRY_WAIT) }==true }
                 val id=firstPending?.takeIf { s.entries.getValue(it).let { e -> e.status==PreparationStatus.WAITING || e.retryAtMs<=now() } }
                 if (id == null) {
                     val next = firstPending?.let { s.entries.getValue(it).retryAtMs } ?: break
@@ -186,6 +208,17 @@ internal class PreparedLibrary(
                 try {
                     store.claim(id)
                     if(firstUnprepared(snapshot()) != id) throw CancellationException("Programme priority changed")
+                    val shared=streaming?.takeIf { it.isEnabled(id) }
+                    if(shared!=null) {
+                        val (resolved,tracks)=shared.complete(id) { bytes,total,phase -> update { current ->
+                            val old=current.entries.getValue(id);current.copy(entries=current.entries+(id to old.copy(bytes=bytes,total=total,totalKnown=true,phase=phase)))
+                        } }
+                        tracks.forEachIndexed { index,t -> validate(store.file(id,t.name),index==1,resolved.durationSeconds) }
+                        if(tracks.size==1)validate(store.file(id,tracks[0].name),true,resolved.durationSeconds)
+                        currentCoroutineContext().ensureActive()
+                        update { it.copy(entries=it.entries+(id to PreparedEntry(id,PreparationStatus.READY,resolved.title,resolved.durationSeconds,tracks.sumOf { t->t.bytes },tracks.sumOf { t->t.bytes },tracks=tracks))) }
+                        persist();shared.onReady(id);continue
+                    }
                     val resolved = source.resolve(id)
                     check(resolved.videoId == id && resolved.durationSeconds > 0) { "UNSUPPORTED" }
                     val tracks = mutableListOf<LocalTrack>()
@@ -233,6 +266,7 @@ internal class PreparedLibrary(
                     onFailure(id, error)
                     val code = when {
                         error is StorageUnavailable -> error.code
+                        error is dev.siyovush.parentcast.tv.streaming.RangeFailure && error.reason in setOf("NO_SPACE","REPRESENTATION_CHANGED","RANGE_UNSUPPORTED","RANGE_IDENTITY_UNCONFIRMED","STORAGE_ERROR","UNAVAILABLE","UNSUPPORTED","YOUTUBE_AUTH_REQUIRED") -> error.reason
                         !store.storage.available(id) -> "STORAGE_UNAVAILABLE"
                         !store.storage.volume(store.storage.placement(id)).writable -> "STORAGE_READ_ONLY"
                         error is YouTubeSourceException && error.failure.stopRequested -> "YOUTUBE_AUTH_REQUIRED"
@@ -248,7 +282,7 @@ internal class PreparedLibrary(
                             val delay = maxOf(retryDelay(attempt), (error as? RetryableTransfer)?.retryAfterMs ?: 0).coerceIn(1,600_000)
                             s1.copy(entries = s1.entries + (id to old.copy(status = PreparationStatus.RETRY_WAIT, bytes = store.retainedBytes(id), phase = "RETRY", error = "NETWORK_RETRY", attempts = attempt, retryAtMs = now() + delay))) }
                     } else {
-                        if (code in setOf("UNSUPPORTED","UNAVAILABLE") || (code=="DOWNLOAD_FAILED" && !transient)) runCatching { store.discardDownload(id) }
+                        if (code in setOf("UNSUPPORTED","UNAVAILABLE") || (code=="DOWNLOAD_FAILED" && !transient)) { streaming?.invalidateMaterialized(id);runCatching { store.discardDownload(id) } }
                         update { s1 -> val old = s1.entries.getValue(id)
                             s1.copy(entries = s1.entries + (id to old.copy(status = PreparationStatus.ERROR, error = code, bytes = store.retainedBytes(id), tracks = emptyList(), phase = ""))) }
                     }
@@ -344,12 +378,34 @@ internal class PreparedLibrary(
     internal fun mediaTitle(id: String): String = snapshot().entries[id]?.title.orEmpty()
     internal fun localEntries(): List<PreparedEntry> = snapshot().entries.values.filter { it.local && it.status == PreparationStatus.READY && it.id !in snapshot().deleting }
     internal fun mediaStorageId(id:String)=store.storage.placement(id)
+    internal fun streamingStore()=store
+    internal fun installStreaming(value:dev.siyovush.parentcast.tv.streaming.StreamingLibrary){
+        streaming=value
+        resumeDeletionRecovery()
+    }
+    internal suspend fun reserveStreaming(id:String,storageId:String,storageVersion:Long) {
+        require(VIDEO_ID.matches(id))
+        synchronized(lock) { check(!storageBusy && state.deleting.isEmpty() && !state.storageError && id !in streamingReservations) { "BUSY" };streamingReservations.add(id) }
+        try {
+            if(activeId==id){active?.cancel();worker.withLock { } }
+            synchronized(lock) { check(!storageBusy) { "BUSY" };store.storage.claim(listOf(id),storageId,storageVersion);check(store.storage.placement(id)==storageId) { "STORAGE_CHANGED" } }
+        } catch(error:Throwable){releaseStreaming(id);throw error}
+    }
+    internal fun releaseStreaming(id:String){synchronized(lock){streamingReservations.remove(id)}}
+    internal suspend fun enableStreaming(id:String) {
+        synchronized(lock) { check(!storageBusy && state.deleting.isEmpty()) { "BUSY" }
+            update { s -> val old=s.entries[id] ?: PreparedEntry(id)
+                // A single-video action never revives an old paused/all-queue preparation plan.
+                val previous=if(s.enabled && !s.paused)s.plan else emptyList()
+                s.copy(enabled=true,paused=false,explicitSelection=true,targetGroupId=null,plan=(listOf(id)+previous).distinct(),entries=s.entries+(id to if(old.status==PreparationStatus.READY)old else old.copy(status=PreparationStatus.WAITING,error="",retryAtMs=0))) }
+        };persist();releaseStreaming(id);wakeService()
+    }
     internal fun reserveImport(id:String) { require(LOCAL_ID.matches(id));synchronized(lock) { check(!storageBusy) { "BUSY" };store.claim(id) } }
-    internal fun storageAvailable(id:String)=store.storage.available(id)
-    internal fun mediaReadiness(id:String):String = snapshot().let { s -> when {
+    internal fun storageAvailable(id:String,view:StorageAvailability?=null)=if(view==null)store.storage.available(id) else store.storage.placement(id) in view.available
+    internal fun mediaReadiness(id:String,view:StorageAvailability?=null):String = snapshot().let { s -> when {
         synchronized(lock) { storageCleaning } -> "STORAGE_BUSY"
         id in s.deleting -> "DELETING"
-        s.entries[id]?.status==PreparationStatus.READY && !store.storage.available(id) -> "STORAGE_UNAVAILABLE"
+        s.entries[id]?.status==PreparationStatus.READY && !storageAvailable(id,view) -> "STORAGE_UNAVAILABLE"
         else -> s.entries[id]?.status?.name ?: "WAITING"
     } }
     internal fun allowsPlaybackFile(id:String,file:File):Boolean = runCatching {
@@ -367,7 +423,7 @@ internal class PreparedLibrary(
     }
     @OptIn(ExperimentalCoroutinesApi::class)
     internal suspend fun migrateStorage(target:String,version:Long,command:StorageCommand) {
-        synchronized(lock) { check(!storageBusy && importing.isEmpty() && state.deleting.isEmpty() && !state.storageError) { "BUSY" };storageBusy=true;migrationCancelRequested=false }
+        synchronized(lock) { check(!storageBusy && importing.isEmpty() && streamingReservations.isEmpty() && state.deleting.isEmpty() && !state.storageError) { "BUSY" };storageBusy=true;migrationCancelRequested=false }
         var admitted=false
         try {
             val candidates=snapshot().entries.values.filter { it.status==PreparationStatus.READY && store.storage.placement(it.id)!=target }
@@ -397,7 +453,7 @@ internal class PreparedLibrary(
                                     check(store.storage.usedBytes(target)+track.bytes<=store.storage.limit(target) && store.storage.volume(target).freeBytes-track.bytes>=FREE_RESERVE) { "NO_SPACE" }
                                     var copied=0L
                                     sourceFile.inputStream().use { input -> FileOutputStream(temporary).use { output ->
-                                        val buffer=ByteArray(128*1024);var lastReport=0L
+                                        val buffer=ByteArray(4*1024*1024);var lastReport=0L
                                         while(true) {
                                             checkMigrationCancellation();val count=input.read(buffer);if(count<0)break
                                             check(copied+count<=track.bytes) { "SOURCE_CHANGED" }
@@ -417,6 +473,7 @@ internal class PreparedLibrary(
                             checkMigrationCancellation()
                             check(entry.tracks.all { t -> val file=store.fileAt(entry.id,t.name,target);file.length()==t.bytes && sha256(file) { context.ensureActive() }==t.sha256 }) { "COPY_VERIFY_FAILED" }
                             store.storage.switchCopy(entry,sourceId,target,completedBytes)
+                            streaming?.moved(entry.id,target)
                             update { it }
                         }
                         checkMigrationCancellation();store.storage.finish("COMPLETE")
@@ -431,7 +488,7 @@ internal class PreparedLibrary(
         synchronized(lock) { store.storage.cancel(version,command);migrationCancelRequested=true;storageJob?.cancel() }
     }
     internal suspend fun cleanStorageOriginals(version:Long,command:StorageCommand,guard:()->Boolean) {
-        synchronized(lock) { check(!storageBusy && importing.isEmpty() && state.deleting.isEmpty()) { "BUSY" };storageBusy=true;storageCleaning=true }
+        synchronized(lock) { check(!storageBusy && importing.isEmpty() && streamingReservations.isEmpty() && state.deleting.isEmpty()) { "BUSY" };storageBusy=true;storageCleaning=true }
         var admitted=false
         try {
             check(guard()) { "PLAYBACK_CHANGED" }

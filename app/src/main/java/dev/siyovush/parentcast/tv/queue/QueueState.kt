@@ -35,6 +35,12 @@ data class QueueState(
     val batchReceipts: List<BatchReceipt> = emptyList(),
     val groups: List<QueueGroup> = emptyList(),
     val activeGroupId: String? = null,
+    val progress: Map<String, VideoProgress> = emptyMap(),
+    val favorites: Set<String> = emptySet(),
+    val playNext: NextVideo? = null,
+    val stopAfterCurrent: Boolean = false,
+    val childScreen: ChildScreen = ChildScreen(),
+    val undo: ProgrammeUndo? = null,
 ) {
     init {
         require(items.map(QueueItem::queueItemId).distinct().size == items.size)
@@ -50,6 +56,10 @@ data class QueueState(
         val ids = items.map { it.videoId }.toSet()
         require(groups.all { ids.containsAll(it.videoIds) })
         require(activeGroupId == null || groups.any { it.id == activeGroupId && currentItem?.videoId in it.videoIds })
+        require(progress.size <= 10_000 && progress.keys.all(::validProgrammeVideoId))
+        require(favorites.size <= 10_000 && favorites.all(::validProgrammeVideoId))
+        require(playNext == null || playNext.videoId in ids)
+        require(childScreen.groupIds.all { id -> groups.any { it.id == id } })
     }
 
     val currentItem: QueueItem?
@@ -67,8 +77,9 @@ data class QueueState(
     }
     private fun retain(retained: List<QueueItem>): QueueState {
         val ids = retained.map { it.videoId }.toSet()
-        val kept = groups.mapNotNull { g -> g.videoIds.filter { it in ids }.takeIf { it.isNotEmpty() }?.let { g.copy(videoIds = it) } }
-        return copy(items = retained, groups = kept, activeGroupId = activeGroupId?.takeIf { id -> kept.any { it.id == id } })
+        val kept = groups.mapNotNull { g -> g.withMembers(g.videoIds.filter { it in ids }) }
+        return copy(items = retained, groups = kept, activeGroupId = activeGroupId?.takeIf { id -> kept.any { it.id == id } },
+            playNext = playNext?.takeIf { it.videoId in ids }, childScreen = childScreen.copy(groupIds = childScreen.groupIds.filter { id -> kept.any { it.id == id } }))
     }
 
     fun add(item: QueueItem): QueueState = if (items.any { it.videoId == item.videoId }) this else copy(
@@ -78,14 +89,14 @@ data class QueueState(
 
     fun playNow(item: QueueItem): QueueState {
         val existing = items.indexOfFirst { it.videoId == item.videoId }
-        if (existing >= 0) return copy(currentIndex = existing, positionMs = 0, activeGroupId = null,
+        if (existing >= 0) return copy(currentIndex = existing, positionMs = 0, activeGroupId = null, playNext = null,
             intent = PlaybackIntent.PLAY, finished = false)
         if (items.isEmpty()) {
-            return QueueState(items = listOf(item), currentIndex = 0, intent = PlaybackIntent.PLAY)
+            return copy(items = listOf(item), currentIndex = 0, positionMs = 0, intent = PlaybackIntent.PLAY, finished = false, activeGroupId = null, playNext = null)
         }
         if (finished) {
             return copy(
-                items = items + item, activeGroupId = null,
+                items = items + item, activeGroupId = null, playNext = null,
                 currentIndex = items.size,
                 positionMs = 0,
                 intent = PlaybackIntent.PLAY,
@@ -93,7 +104,7 @@ data class QueueState(
             )
         }
         return copy(
-            items = items.take(currentIndex + 1) + item + items.drop(currentIndex + 1), activeGroupId = null,
+            items = items.take(currentIndex + 1) + item + items.drop(currentIndex + 1), activeGroupId = null, playNext = null,
             currentIndex = currentIndex + 1,
             positionMs = 0,
             intent = PlaybackIntent.PLAY,
@@ -130,6 +141,19 @@ data class QueueState(
 
     fun next(): QueueState {
         if (items.isEmpty()) return this
+        playNext?.let { queued ->
+            if (!queued.inFlight) {
+                val ordinary = copy(playNext = null).next()
+                return copy(currentIndex = items.indexOfFirst { it.videoId == queued.videoId }, activeGroupId = null,
+                    positionMs = 0, finished = false,
+                    playNext = queued.copy(inFlight = true, returnVideoId = ordinary.currentItem?.videoId?.takeUnless { ordinary.finished }, returnGroupId = ordinary.activeGroupId))
+            }
+            val index = items.indexOfFirst { it.videoId == queued.returnVideoId }
+            val returnGroupAvailable = queued.returnGroupId == null || groups.any { it.id == queued.returnGroupId && queued.returnVideoId in it.videoIds }
+            return if (index < 0 || !returnGroupAvailable) copy(playNext = null, positionMs = 0, intent = PlaybackIntent.STOP, finished = true)
+                else copy(playNext = null, currentIndex = index, positionMs = 0, finished = false,
+                    activeGroupId = queued.returnGroupId?.takeIf { id -> groups.any { it.id == id && items[index].videoId in it.videoIds } })
+        }
         activeGroup?.let { group ->
             val nextId = group.videoIds.getOrNull(group.videoIds.indexOf(currentItem!!.videoId) + 1)
             return if (nextId == null) copy(positionMs = 0, intent = PlaybackIntent.STOP, finished = true)

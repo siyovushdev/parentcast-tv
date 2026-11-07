@@ -11,8 +11,8 @@ android {
         applicationId = "dev.siyovush.parentcast.tv"
         minSdk = 33
         targetSdk = 35
-        versionCode = 16
-        versionName = "0.1.0-family-library-beta"
+        versionCode = 22
+        versionName = "0.1.0-stream-start-beta"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -56,6 +56,7 @@ dependencies {
     implementation("org.jmdns:jmdns:3.6.5")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
+    implementation("androidx.media3:media3-database:1.5.1")
     implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
     implementation("io.github.junkfood02.youtubedl-android:common:0.18.1")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.11.1")
@@ -69,6 +70,7 @@ dependencies {
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.json:json:20240303")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }
 
 // Candidate must be newer than the existing v5 data APK if system-image integration is approved.
