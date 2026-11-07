@@ -21,7 +21,8 @@ enum class PlaybackIntent {
     STOP,
 }
 
-data class BatchReceipt(val key: String, val fingerprint: String, val createdAtMs: Long)
+data class QueueAddition(val added: Int, val skipped: Int)
+data class BatchReceipt(val key: String, val fingerprint: String, val createdAtMs: Long, val addition: QueueAddition? = null)
 
 enum class BatchAddResult { APPLIED, REPLAY, CONFLICT, KEY_REUSED, STORAGE_ERROR, RECEIPT_LIMIT }
 
@@ -52,12 +53,15 @@ data class QueueState(
     val pendingItems: List<QueueItem>
         get() = if (currentIndex < 0) emptyList() else items.drop(currentIndex + 1)
 
-    fun add(item: QueueItem): QueueState = copy(
+    fun add(item: QueueItem): QueueState = if (items.any { it.videoId == item.videoId }) this else copy(
         items = items + item,
         currentIndex = if (items.isEmpty()) 0 else currentIndex,
     )
 
     fun playNow(item: QueueItem): QueueState {
+        val existing = items.indexOfFirst { it.videoId == item.videoId }
+        if (existing >= 0) return copy(currentIndex = existing, positionMs = 0,
+            intent = PlaybackIntent.PLAY, finished = false)
         if (items.isEmpty()) {
             return QueueState(items = listOf(item), currentIndex = 0, intent = PlaybackIntent.PLAY)
         }

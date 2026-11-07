@@ -20,13 +20,26 @@ class QueueStateTest {
     }
 
     @Test
-    fun duplicateVideoHasIndependentQueueIdentity() {
+    fun duplicateVideoKeepsOriginalQueueIdentity() {
         val state = QueueState.Empty
             .add(QueueItem("first", "video000001"))
             .add(QueueItem("second", "video000001"))
 
-        assertEquals(2, state.items.size)
-        assertEquals(2, state.items.map { it.queueItemId }.distinct().size)
+        assertEquals(1, state.items.size)
+        assertEquals("first", state.items.single().queueItemId)
+    }
+
+    @Test
+    fun playNowReusesExistingEntryIncludingHistoryAndFinishedQueue() {
+        val initial = QueueState.Empty.add(item(1)).add(item(2)).next().withPosition(900)
+        for (state in listOf(initial, initial.next())) {
+            val selected = state.playNow(QueueItem("new-id", "video000001"))
+            assertEquals(state.items, selected.items)
+            assertEquals(0, selected.currentIndex)
+            assertEquals(0L, selected.positionMs)
+            assertEquals(PlaybackIntent.PLAY, selected.intent)
+            assertFalse(selected.finished)
+        }
     }
 
     @Test

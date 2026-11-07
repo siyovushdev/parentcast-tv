@@ -22,7 +22,8 @@ class PlaylistBatchTest {
         val coordinator = coordinator(store, player)
         coordinator.start()
         assertEquals(BatchAddResult.APPLIED, coordinator.addBatch(listOf("video000002", "video000001", "video000002"), 0, "command-1"))
-        assertEquals(listOf("video000002", "video000001", "video000002"), store.state.items.map { it.videoId })
+        assertEquals(listOf("video000002", "video000001"), store.state.items.map { it.videoId })
+        assertEquals(QueueAddition(2, 1), coordinator.additionSummary("command-1"))
         assertEquals(1, store.writes)
         assertEquals(1L, store.state.version)
         assertEquals(1, store.state.batchReceipts.size)
@@ -93,6 +94,49 @@ class PlaylistBatchTest {
         assertEquals(listOf("video000001"), store.state.items.map { it.videoId })
         assertEquals(1, store.writes)
         coordinator.close()
+    }
+
+    @Test
+    fun newCommandsSkipCurrentHistoryAndIncomingDuplicatesWithoutInterruptingPlayback() = runTest {
+        val initial = QueueState.Empty.add(QueueItem("first", "video000001"))
+            .add(QueueItem("current", "video000002")).next().withPosition(1234).copy(intent = PlaybackIntent.PAUSE)
+        val store = BatchStore(initial)
+        val player = BatchPlayer()
+        val c = coordinator(store, player)
+        assertEquals(BatchAddResult.APPLIED, c.addBatch(listOf("video000002", "video000003", "video000003", "video000001"), 0, "mixed-command"))
+        assertEquals(listOf("video000001", "video000002", "video000003"), store.state.items.map { it.videoId })
+        assertEquals(initial.currentItem, store.state.currentItem)
+        assertEquals(1234L, store.state.positionMs)
+        assertEquals(PlaybackIntent.PAUSE, store.state.intent)
+        assertEquals(QueueAddition(1, 3), c.additionSummary("mixed-command"))
+        assertEquals(0, player.calls)
+        assertEquals(BatchAddResult.APPLIED, c.addBatch(listOf("video000001", "video000002", "video000003"), 1, "all-duplicates"))
+        assertEquals(1L, store.state.version)
+        assertEquals(QueueAddition(0, 3), c.additionSummary("all-duplicates"))
+        // The no-op receipt and its exact response survive restart, even after the queue changes.
+        store.state = QueueSnapshotCodec.decode(QueueSnapshotCodec.encode(store.state))
+        val restored = coordinator(store, player)
+        assertEquals(BatchAddResult.APPLIED, restored.addBatch(listOf("video000004"), 1, "next-command"))
+        assertEquals(BatchAddResult.REPLAY, restored.addBatch(listOf("video000001", "video000002", "video000003"), 1, "all-duplicates"))
+        assertEquals(QueueAddition(0, 3), restored.additionSummary("all-duplicates"))
+        assertEquals(BatchAddResult.CONFLICT, restored.addBatch(listOf("video000001"), 1, "stale-command"))
+        assertEquals(4, store.state.items.size)
+        c.close(); restored.close()
+    }
+
+    @Test
+    fun localIdsAreDeduplicatedAndCanBeAddedAgainAfterClear() = runTest {
+        val store = BatchStore(); val c = coordinator(store, BatchPlayer())
+        val id = "local_" + "a".repeat(32)
+        assertEquals(BatchAddResult.APPLIED, c.addBatch(listOf(id, id), 0, "local-command", local = true))
+        assertEquals(QueueAddition(1, 1), c.additionSummary("local-command"))
+        assertEquals(BatchAddResult.APPLIED, c.addBatch(listOf(id), 1, "local-command-2", local = true))
+        assertEquals(QueueAddition(0, 1), c.additionSummary("local-command-2"))
+        assertEquals(1L, store.state.version)
+        assertTrue(c.clearAll(1))
+        assertEquals(BatchAddResult.APPLIED, c.addBatch(listOf(id), 2, "local-command-3", local = true))
+        assertEquals(1, store.state.items.size)
+        c.close()
     }
 
     private fun TestScope.coordinator(store: BatchStore, player: BatchPlayer) = PlaybackCoordinator(

@@ -4,6 +4,7 @@ import dev.siyovush.parentcast.tv.queue.BatchAddResult
 import dev.siyovush.parentcast.tv.queue.BatchReceipt
 import dev.siyovush.parentcast.tv.queue.PlaybackIntent
 import dev.siyovush.parentcast.tv.queue.QueueItem
+import dev.siyovush.parentcast.tv.queue.QueueAddition
 import dev.siyovush.parentcast.tv.queue.QueueState
 import dev.siyovush.parentcast.tv.queue.QueueStore
 import dev.siyovush.parentcast.tv.youtube.ResolvedVideo
@@ -91,7 +92,9 @@ class PlaybackCoordinator(
 
     fun add(videoId: String) {
         if (closed) return
-        state = state.add(QueueItem(UUID.randomUUID().toString(), videoId))
+        val updated = state.add(QueueItem(UUID.randomUUID().toString(), videoId))
+        if (updated == state) return
+        state = updated
         if (status == PlaybackStatus.IDLE) status = PlaybackStatus.STOPPED
         error = null
         persist()
@@ -103,6 +106,8 @@ class PlaybackCoordinator(
             ?: return null
         return if (receipt.fingerprint == fingerprint) BatchAddResult.REPLAY else BatchAddResult.KEY_REUSED
     }
+
+    fun additionSummary(commandKey: String): QueueAddition? = state.batchReceipts.find { it.key == commandKey }?.addition
 
     /** One queue transaction; no player calls and no change of playback intent. */
     fun addBatch(videoIds: List<String>, expectedVersion: Long, commandKey: String, requestFingerprint: String? = null, local: Boolean = false): BatchAddResult {
@@ -119,12 +124,14 @@ class PlaybackCoordinator(
         }
         if (state.version != expectedVersion) return BatchAddResult.CONFLICT
         if (receipts.size >= 1000) return BatchAddResult.RECEIPT_LIMIT
-        val items = videoIds.map { QueueItem(UUID.randomUUID().toString(), it, local) }
+        val seen = state.items.mapTo(mutableSetOf()) { it.videoId }
+        val items = videoIds.filter { seen.add(it) }.map { QueueItem(UUID.randomUUID().toString(), it, local) }
+        val addition = QueueAddition(items.size, videoIds.size - items.size)
         val updated = state.copy(
             items = state.items + items,
-            currentIndex = if (state.items.isEmpty()) 0 else state.currentIndex,
-            version = state.version + 1,
-            batchReceipts = receipts + BatchReceipt(commandKey, fingerprint, now),
+            currentIndex = if (state.items.isEmpty() && items.isNotEmpty()) 0 else state.currentIndex,
+            version = state.version + if (items.isEmpty()) 0 else 1,
+            batchReceipts = receipts + BatchReceipt(commandKey, fingerprint, now, addition),
         )
         try {
             store.write(updated)

@@ -37,7 +37,9 @@ object QueueSnapshotCodec {
             .put("batchReceipts", JSONArray().apply {
                 state.batchReceipts.forEach { receipt ->
                     put(JSONObject().put("key", receipt.key).put("fingerprint", receipt.fingerprint)
-                        .put("createdAtMs", receipt.createdAtMs))
+                        .put("createdAtMs", receipt.createdAtMs).apply {
+                            receipt.addition?.let { put("addition", JSONObject().put("added", it.added).put("skipped", it.skipped)) }
+                        })
                 }
             })
             .toString()
@@ -71,7 +73,8 @@ object QueueSnapshotCodec {
             batchReceipts = root.optJSONArray("batchReceipts")?.let { receipts ->
                 List(receipts.length()) { index ->
                     val receipt = receipts.getJSONObject(index)
-                    BatchReceipt(receipt.getString("key"), receipt.getString("fingerprint"), receipt.getLong("createdAtMs"))
+                    BatchReceipt(receipt.getString("key"), receipt.getString("fingerprint"), receipt.getLong("createdAtMs"),
+                        receipt.optJSONObject("addition")?.let { QueueAddition(it.getInt("added"), it.getInt("skipped")) })
                 }
             } ?: emptyList(),
         )

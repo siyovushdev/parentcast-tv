@@ -29,6 +29,25 @@ class PlaylistApiTest {
     @get:Rule val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun playlistThenSavedCollectionAndAnotherBrowserCannotDuplicateTheQueue() = runTest {
+        val f = Fixture(this); val token = f.pair(); val other = f.pair()
+        val id = f.preview(token); runCurrent()
+        val saved = f.post(token, "/api/collections/save", JSONObject().put("previewId", id)
+            .put("indices", JSONArray(listOf(1,2))).put("name", "Programme"))
+        val collection = JSONObject(saved.body).getJSONObject("collection").getString("id")
+        val first = f.apply(token,id,listOf(1,2))
+        assertEquals(2,JSONObject(first.body).getJSONObject("addition").getInt("added"))
+        val repeated = f.post(other,"/api/collections/apply",JSONObject().put("collectionId",collection).put("queueVersion",1))
+        assertEquals(200,repeated.code)
+        assertEquals(0,JSONObject(repeated.body).getJSONObject("addition").getInt("added"))
+        assertEquals(2,JSONObject(repeated.body).getJSONObject("addition").getInt("skipped"))
+        assertEquals(listOf("video000001","video000002"),f.videoIds())
+        assertEquals(1L,f.coordinator.currentSnapshot().queueState.version)
+        assertEquals(0,f.playerCalls)
+        f.close()
+    }
+
+    @Test
     fun previewIsOwnerScopedAndDoesNotChangeQueue() = runTest {
         val fixture = Fixture(this)
         val first = fixture.pair()

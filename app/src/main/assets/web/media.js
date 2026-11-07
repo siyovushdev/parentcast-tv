@@ -48,17 +48,23 @@ async function refreshLocalMedia() {
             }
             jobs.append(row);
         }
-        byId("localAddSelected").disabled=!selectedLocal.size;
+        updateLocalAddControl();
     } catch(error) { byId("localMessage").textContent=apiErrorText(error); }
     finally { localRefreshing=false; }
+}
+function updateLocalAddControl() {
+    const queued = new Set((state && state.items || []).map(item => item.videoId));
+    const hasNew = [...selectedLocal].some(id => !queued.has(id));
+    byId("localAddSelected").textContent = selectedLocal.size && !hasNew ? "Уже в программе" : "Добавить выбранные в программу";
+    byId("localAddSelected").disabled = !state || !hasNew || busyActions.has("local-add") || Object.values(pendingCommands).some(command => command.path === "/api/local/add");
 }
 async function addLocalSelected() {
     if(!state || !selectedLocal.size)return;
     await withBusy("local-add",async()=> {
         const ids=localFiles.filter(e=>selectedLocal.has(e.videoId)).map(e=>e.videoId);
         try {
-            await perform("local-add-"+commandKey(),"/api/local/add",{videoIds:ids,queueVersion:state.queueVersion,idempotencyKey:commandKey()});
-            byId("localMessage").textContent="Выбранные видео добавлены. Воспроизведение не запущено.";
+            const result=await perform("local-add-"+commandKey(),"/api/local/add",{videoIds:ids,queueVersion:state.queueVersion,idempotencyKey:commandKey()});
+            byId("localMessage").textContent=queueAdditionMessage(result);
         } catch(error) { byId("localMessage").textContent=apiErrorText(error); }
     });
 }
@@ -200,7 +206,7 @@ function cancelQueueOrder() { queueOrder=null;byId("queueOrderTools").hidden=tru
 byId("localRefreshButton").addEventListener("click",()=>run(refreshLocalMedia));
 byId("uploadLocalButton").addEventListener("click",()=>run(uploadLocalFiles));
 byId("cancelUploadButton").addEventListener("click",()=> { uploadCancelled=true;localTransfer?.abort();if(uploadJobId)run(()=>cancelImport(uploadJobId)); });
-byId("localLibrary").addEventListener("change",event=> { const box=event.target.closest("input[data-local-id]");if(box){if(box.checked)selectedLocal.add(box.dataset.localId);else selectedLocal.delete(box.dataset.localId);byId("localAddSelected").disabled=!selectedLocal.size;} });
+byId("localLibrary").addEventListener("change",event=> { const box=event.target.closest("input[data-local-id]");if(box){if(box.checked)selectedLocal.add(box.dataset.localId);else selectedLocal.delete(box.dataset.localId);updateLocalAddControl();} });
 byId("localLibrary").addEventListener("click",event=> { const button=event.target.closest("button[data-local-delete]");if(button)run(()=>deleteLocal(button.dataset.localDelete)); });
 byId("localSelectAll").addEventListener("click",()=> {localFiles.forEach(e=>selectedLocal.add(e.videoId));localFilesViewKey="";run(refreshLocalMedia);});
 byId("localSelectNone").addEventListener("click",()=> {selectedLocal.clear();localFilesViewKey="";run(refreshLocalMedia);});

@@ -25,6 +25,38 @@ class ApiControllerTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun legacyAddResponseRemainsReplayableAfterUpgrade() {
+        val f = Fixture(); val token = f.pair()
+        val body = JSONObject().put("links", JSONArray(listOf("https://youtu.be/jNQXAC9IVRw")))
+            .put("idempotencyKey", "legacy-add-1").toString()
+        val original = f.controller.handle(request("POST", "/api/queue/add", f.auth(token), body))
+        val file = File(temporaryFolder.root, "idempotency.json")
+        val stored = JSONObject(file.readText())
+        stored.keys().forEach { stored.getJSONObject(it).remove("requestFingerprint") }
+        file.writeText(stored.toString())
+        val replay = f.controller.handle(request("POST", "/api/queue/add", f.auth(token), body))
+        assertEquals(200, replay.code)
+        assertEquals(original.body, replay.body)
+        assertEquals(1, f.coordinator.currentSnapshot().queueState.items.size)
+    }
+
+    @Test
+    fun differentLinksAndNewCommandsCannotAppendTheSameVideo() {
+        val f = Fixture(); val token = f.pair()
+        fun add(key: String) = f.controller.handle(request("POST", "/api/queue/add", f.auth(token), JSONObject()
+            .put("links", JSONArray(listOf("https://youtu.be/jNQXAC9IVRw", "https://www.youtube.com/watch?v=jNQXAC9IVRw")))
+            .put("idempotencyKey", key).toString()))
+        val first = JSONObject(add("dedup-first").body)
+        assertEquals(1, first.getJSONObject("addition").getInt("added"))
+        assertEquals(1, first.getJSONObject("addition").getInt("skipped"))
+        val second = JSONObject(add("dedup-second").body)
+        assertEquals(1, second.getJSONArray("items").length())
+        assertEquals(0, second.getJSONObject("addition").getInt("added"))
+        assertEquals(2, second.getJSONObject("addition").getInt("skipped"))
+        assertEquals(first.getLong("queueVersion"), second.getLong("queueVersion"))
+    }
+
+    @Test
     fun stateRequiresAuthorization() {
         val fixture = Fixture()
         val response = fixture.controller.handle(request("GET", "/api/state", fixture.auth(null)))
