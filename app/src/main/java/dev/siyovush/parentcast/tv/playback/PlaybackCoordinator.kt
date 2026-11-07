@@ -377,6 +377,29 @@ class PlaybackCoordinator(
         emit()
     }
 
+    /** Seek only the exact current player request. Preserve PLAY/PAUSE and persist before player I/O. */
+    fun seekCurrent(itemId: String, expectedVersion: Long, expectedGeneration: Long, positionMs: Long): SeekResult {
+        if(closed || state.currentItem?.queueItemId!=itemId || state.version!=expectedVersion || generation!=expectedGeneration)return SeekResult.CONFLICT
+        val duration=player.durationMs()
+        if(startupStorageBlocked || state.finished || state.intent==PlaybackIntent.STOP || preparedItemId!=itemId || !player.isSeekable() || duration==null)return SeekResult.UNAVAILABLE
+        require(positionMs in 0..duration)
+        val previous=state.withPosition(player.currentPositionMs())
+        val target=positionMs.coerceAtMost((duration-1).coerceAtLeast(0))
+        val updated=previous.withPosition(target).copy(version=state.version+1)
+        try {store.write(updated)} catch(_:Exception){storageWarning=true;emit();return SeekResult.STORAGE_ERROR}
+        val previousStatus=status
+        state=updated
+        // An in-buffer seek may keep playing without a new onPlaying event. Real player
+        // callbacks own BUFFERING/PLAYING, including callbacks synchronous with seekTo.
+        status=if(state.intent==PlaybackIntent.PLAY && previousStatus==PlaybackStatus.PLAYING) PlaybackStatus.PLAYING
+            else if(state.intent==PlaybackIntent.PLAY) PlaybackStatus.BUFFERING else PlaybackStatus.PAUSED
+        try {player.seekTo(target)} catch(_:Exception){
+            state=previous;status=previousStatus
+            return try {store.write(previous);emit();SeekResult.FAILED} catch(_:Exception){storageWarning=true;emit();SeekResult.STORAGE_ERROR}
+        }
+        emit();return SeekResult.APPLIED
+    }
+
     fun savePosition() {
         val current = state.currentItem ?: return
         if (preparedItemId != current.queueItemId || state.finished) return
@@ -561,7 +584,7 @@ class PlaybackCoordinator(
     }
 
     fun currentSnapshot(): CoordinatorSnapshot = CoordinatorSnapshot(
-        queueState = state,
+        queueState = if(preparedItemId==state.currentItem?.queueItemId && preparedItemId!=null && !state.finished && player.durationMs()!=null && player.isSeekable()) state.withPosition(player.currentPositionMs()) else state,
         status = status,
         localPlayback = localPlayback,
         currentTitle = currentTitle,
@@ -570,5 +593,7 @@ class PlaybackCoordinator(
         generation = generation,
         storageWarning = storageWarning,
         updatedAtMs = updatedAtMs,
+        durationMs = if(preparedItemId!=null && preparedItemId==state.currentItem?.queueItemId)player.durationMs() else null,
+        seekable = preparedItemId!=null && preparedItemId==state.currentItem?.queueItemId && !state.finished && state.intent!=PlaybackIntent.STOP && player.isSeekable(),
     )
 }

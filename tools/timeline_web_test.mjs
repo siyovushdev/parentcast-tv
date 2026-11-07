@@ -1,0 +1,17 @@
+// Synthetic interaction contract. Real Media3/seek is checked separately on H728.
+import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{value:0,textContent:'',disabled:false,handlers:{},setAttribute(k,v){this[k]=v},addEventListener(k,f){this.handlers[k]=f}});return elements.get(id)};
+const ctx=vm.createContext({byId:el,document:{hidden:false},Date,setInterval(){},run:f=>f(),commandKey:()=>Math.random().toString(),resumeTime:ms=>{const s=Math.floor(ms/1000);return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`},apiErrorText:e=>e.message});
+vm.runInContext(`var state={items:[{queueItemId:'first'}],currentIndex:0,queueVersion:5,playbackGeneration:7,seekable:true,durationMs:120000,positionMs:30000,status:'PAUSED',intent:'PAUSE'};var sent=[];var fail=false;var delayed=null;var perform=async(k,path,body)=>{sent.push({path,body});if(delayed)await delayed;if(fail)throw Error('connection failed');return {...state,positionMs:body.positionMs,queueVersion:state.queueVersion+1}};`,ctx);
+vm.runInContext(fs.readFileSync('app/src/main/assets/web/timeline.js','utf8'),ctx);
+assert.equal(el('playheadSlider').disabled,false);assert.equal(el('playheadTime').textContent,'0:30');assert.equal(el('videoDuration').textContent,'2:00');
+el('playheadSlider').value=65;el('playheadSlider').handlers.input();assert.equal(el('playheadTime').textContent,'1:05');assert.equal(vm.runInContext('sent.length',ctx),0,'Dragging never sends a request per pixel');
+vm.runInContext('state.positionMs=31000;renderTimeline()',ctx);assert.equal(el('playheadSlider').value,65,'Polling must not move a dragged thumb');
+await el('playheadSlider').handlers.change();let sent=vm.runInContext('sent.at(-1)',ctx);assert.equal(sent.path,'/api/playback/seek');assert.equal(sent.body.positionMs,65000);assert.equal(sent.body.queueItemId,'first');assert.equal(sent.body.playbackGeneration,7);assert.equal(sent.body.queueVersion,5);assert.equal(el('playheadSlider').disabled,false);
+await el('seekBack').handlers.click();assert.equal(vm.runInContext('sent.at(-1).body.positionMs',ctx),55000);
+el('playheadSlider').value=90;el('playheadSlider').handlers.input();const count=vm.runInContext('sent.length',ctx);
+vm.runInContext("state.items=[{queueItemId:'next'}];state.queueVersion++;state.playbackGeneration++;state.positionMs=0;renderTimeline()",ctx);el('playheadSlider').value=91;el('playheadSlider').handlers.input();await el('playheadSlider').handlers.change();assert.equal(vm.runInContext('sent.length',ctx),count,'An old drag cannot seek the next video, even after another input event');
+vm.runInContext('state.seekable=false;state.durationMs=null;renderTimeline()',ctx);assert.equal(el('playheadSlider').disabled,true);assert.equal(el('videoDuration').textContent,'—:—');
+vm.runInContext('state.seekable=true;state.durationMs=120000;renderTimeline();fail=true',ctx);await el('seekForward').handlers.click();assert.equal(el('playheadSlider').disabled,false);assert.equal(el('seekMessage').textContent,'connection failed');
+const html=fs.readFileSync('app/src/main/assets/web/index.html','utf8');assert(html.includes('type="range"'));assert(html.includes('/timeline.js'));
+console.log('PASS: timestamps, one seek on release, drag stability, ±10s, stale NEXT protection, unknown/nonseekable controls and failure recovery (synthetic)');

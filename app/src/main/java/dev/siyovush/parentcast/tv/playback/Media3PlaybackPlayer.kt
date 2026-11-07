@@ -129,6 +129,11 @@ class Media3PlaybackPlayer(
         player.clearMediaItems()
     }
 
+    override fun durationMs(): Long? = player.duration.takeIf { it > 0 && it != C.TIME_UNSET }
+    override fun isSeekable(): Boolean = player.isCurrentMediaItemSeekable && durationMs() != null &&
+        player.playbackState in setOf(Player.STATE_READY, Player.STATE_BUFFERING)
+    override fun seekTo(positionMs: Long) { player.seekTo(positionMs) }
+
     override fun currentPositionMs(): Long = player.currentPosition.coerceAtLeast(0)
 
     override fun release() {

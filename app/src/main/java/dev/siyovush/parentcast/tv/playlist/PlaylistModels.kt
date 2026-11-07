@@ -11,6 +11,7 @@ data class PlaylistEntry(
     val selectable: Boolean,
     val durationSeconds: Long?,
     val channel: String?,
+    val thumbnailUrl: String? = null,
 )
 
 data class PlaylistResult(

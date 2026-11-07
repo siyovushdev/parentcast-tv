@@ -35,6 +35,8 @@ internal class ApiController(
     private val displayReady: (() -> Boolean)? = null,
     private val localMedia: dev.siyovush.parentcast.tv.local.LocalVideoApi? = null,
     private val mediaTitle: (String) -> String = { "" },
+    private val thumbnail: ((String, String) -> ApiResponse)? = null,
+    private val mediaDuration: (String) -> Long? = { null },
 ) {
     fun handle(request: ApiRequest): ApiResponse {
         if (!security.isHostAllowed(request.headers["host"])) {
@@ -44,6 +46,8 @@ internal class ApiController(
         if (request.method == "OPTIONS") return ApiResponse(403, error("FORBIDDEN"))
         return when {
             request.method == "GET" && request.path == "/" -> staticAsset("web/index.html", "text/html; charset=utf-8")
+            request.method == "GET" && request.path == "/timeline.js" -> staticAsset("web/timeline.js", "text/javascript; charset=utf-8")
+            request.method == "GET" && request.path == "/thumbnails.js" -> staticAsset("web/thumbnails.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/app.js" -> staticAsset("web/app.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/groups.js" -> staticAsset("web/groups.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/sections.js" -> staticAsset("web/sections.js", "text/javascript; charset=utf-8")
@@ -86,6 +90,7 @@ internal class ApiController(
 
     private fun authorizedApi(request: ApiRequest): ApiResponse {
         val device = authorizedDevice(request.headers) ?: return ApiResponse(401, error("UNAUTHORIZED"))
+        if (request.method == "GET" && request.path.startsWith("/api/thumbnails/")) return thumbnail?.invoke(request.path.removePrefix("/api/thumbnails/"), device.deviceId) ?: ApiResponse(404, error("NOT_FOUND"))
         if (request.method == "GET" && request.path == "/api/state") return ApiResponse(200, stateBody())
         if (request.method == "GET" && request.path == "/api/prepared") return ApiResponse(200, prepared?.state()?.toString() ?: "{}")
         if (request.method == "GET" && request.path == "/api/devices") return devices()
@@ -99,6 +104,21 @@ internal class ApiController(
             "/api/prepared" -> mutation(request, device) { json -> prepared?.mutate(json) ?: (404 to error("NOT_FOUND")) }
             "/api/queue/add" -> mutation(request, device) { json -> add(json, commandStorageKey(request, device, json), requestFingerprint(json)) }
             "/api/queue/play-now" -> mutation(request, device) { json -> playNow(json) }
+            "/api/playback/seek" -> mutation(request, device) { json ->
+                try {
+                    val target=json.get("positionMs");require(target is Int || target is Long);require((target as Number).toLong()>=0)
+                    val version=json.get("queueVersion");val generation=json.get("playbackGeneration")
+                    require((version is Int || version is Long) && (generation is Int || generation is Long))
+                    val result=dispatcher.call {coordinator.seekCurrent(json.getString("queueItemId"),(version as Number).toLong(),(generation as Number).toLong(),target.toLong())}
+                    when(result) {
+                        dev.siyovush.parentcast.tv.playback.SeekResult.APPLIED -> 200 to stateBody()
+                        dev.siyovush.parentcast.tv.playback.SeekResult.CONFLICT -> 409 to error("PLAYBACK_CHANGED")
+                        dev.siyovush.parentcast.tv.playback.SeekResult.UNAVAILABLE -> 409 to error("SEEK_UNAVAILABLE")
+                        dev.siyovush.parentcast.tv.playback.SeekResult.STORAGE_ERROR -> 503 to error("COMMAND_STORAGE_ERROR")
+                        dev.siyovush.parentcast.tv.playback.SeekResult.FAILED -> 503 to error("SEEK_FAILED")
+                    }
+                }catch(_:IllegalArgumentException){badRequest()}catch(_:org.json.JSONException){badRequest()}
+            }
             "/api/playback" -> mutation(request, device) { json -> playback(json) }
             "/api/queue/delete" -> mutation(request, device) { json -> deletePending(json) }
             "/api/queue/move" -> mutation(request, device) { json -> movePending(json) }
@@ -310,7 +330,7 @@ internal class ApiController(
             items.put(
                 JSONObject()
                     .put("queueItemId", item.queueItemId)
-                    .put("videoId", item.videoId).put("local",item.local).put("title",mediaTitle(item.videoId).ifBlank { item.title })
+                    .put("durationSeconds",mediaDuration(item.videoId) ?: JSONObject.NULL).put("videoId", item.videoId).put("local",item.local).put("title",mediaTitle(item.videoId).ifBlank { item.title })
                     .put("preparationStatus",prepared?.readiness(item.videoId) ?: JSONObject.NULL).put("ready",prepared?.let { it.readiness(item.videoId)=="READY" } ?: false),
             )
         }
@@ -326,6 +346,8 @@ internal class ApiController(
             .put("activeGroupId",snapshot.queueState.activeGroupId ?: JSONObject.NULL)
             .put("currentIndex", snapshot.queueState.currentIndex)
             .put("positionMs", snapshot.queueState.positionMs)
+            .put("durationMs",snapshot.durationMs ?: snapshot.queueState.currentItem?.let { mediaDuration(it.videoId)?.times(1000) } ?: JSONObject.NULL)
+            .put("seekable",snapshot.seekable).put("playbackGeneration",snapshot.generation)
             .put("intent", snapshot.queueState.intent.name)
             .put("finished", snapshot.queueState.finished)
             .put("status", snapshot.status.name)

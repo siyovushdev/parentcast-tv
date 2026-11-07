@@ -84,6 +84,7 @@ class YtDlpPlaylistParser {
             selectable = selectable,
             durationSeconds = duration,
             channel = (item.text("channel") ?: item.text("uploader"))?.take(200),
+            thumbnailUrl = item.text("thumbnail") ?: item.path("thumbnails").lastOrNull()?.path("url")?.asText(),
         )
     }
 

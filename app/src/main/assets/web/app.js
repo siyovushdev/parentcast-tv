@@ -6,6 +6,9 @@ let device = readJson(DEVICE_KEY, null);
 let pendingCommands = readJson(COMMANDS_KEY, {});
 let state = null;
 let renderedQueueKey = null;
+let currentThumbnailId = null;
+function resumeTime(ms) { return formatDuration(Math.max(0,Math.floor((Number(ms)||0)/1000))); }
+function appendVideoThumbnail(container,id,title) { if(typeof addVideoThumbnail === "function")addVideoThumbnail(container,id,title); }
 let refreshing = false;
 let signingIn = false;
 let preview = null;
@@ -109,7 +112,8 @@ async function refreshState() {
     if (!device || refreshing) return;
     refreshing = true;
     try {
-        state = await api("/api/state", "GET");
+        const fresh=await api("/api/state", "GET");
+        if(!state || fresh.queueVersion>=state.queueVersion)state=fresh;
         renderState();
         setConnection(true);
     } catch (error) {
@@ -132,10 +136,18 @@ function renderState() {
     if (!state) return;
     byId("playerStatus").textContent = statusNames[state.status] || state.status;
     byId("currentTitle").textContent = state.currentTitle || state.items[state.currentIndex]?.title || "Ролик не выбран";
+    const currentItem=state.items[state.currentIndex];
+    if(currentThumbnailId !== currentItem?.videoId) {
+        currentThumbnailId=currentItem?.videoId;
+        const container=byId("currentVideo");
+        container.querySelectorAll?.(".video-thumbnail").forEach(node=>node.remove());
+        if(currentItem)appendVideoThumbnail(container,currentItem.videoId,state.currentTitle || currentItem.title);
+    }
+    byId("resumePlayback").textContent=state.positionMs>0 && !state.finished ? `Продолжить с ${resumeTime(state.positionMs)}` : "Смотреть";
     byId("displayMessage").textContent = state.displayReady === false ? "На телевизоре открыт другой экран. Для просмотра откройте ParentCast; очередь и загрузки можно готовить здесь." : "";
     const current = state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
     const activeGroup = (state.groups || []).find(g=>g.id === state.activeGroupId);
-    byId("queueSummary").textContent = activeGroup ? `Плейлист «${activeGroup.name}»: ${activeGroup.videoIds.indexOf(state.items[state.currentIndex]?.videoId)+1}/${activeGroup.videoIds.length}. В конце — остановка.` : `Элемент ${current}/${state.items.length}; позиция ${Math.floor(state.positionMs / 1000)} с; intent ${state.intent}; версия ${state.queueVersion}`;
+    byId("queueSummary").textContent = activeGroup ? `Плейлист «${activeGroup.name}»: ${activeGroup.videoIds.indexOf(state.items[state.currentIndex]?.videoId)+1}/${activeGroup.videoIds.length}. Позиция ${resumeTime(state.positionMs)}. В конце — остановка.` : `Элемент ${current}/${state.items.length}; позиция ${Math.floor(state.positionMs / 1000)} с; intent ${state.intent}; версия ${state.queueVersion}`;
     byId("updatedAt").textContent = `Обновлено плеером: ${new Date(state.updatedAtMs).toLocaleString()}`;
     byId("playbackError").textContent = state.error && (state.error.diagnostic || "").includes("PREPARATION_REQUIRED")
         ? "Для VK нажмите «Подготовить очередь / продолжить» и дождитесь готовности файла."
@@ -143,6 +155,7 @@ function renderState() {
     byId("diagnostics").textContent = state.diagnostics || "";
     renderQueue();
     renderPrepared();
+    if(typeof renderTimeline === "function")renderTimeline();
     if (state.connectUrls) byId("homeConnectUrls").textContent = "Адреса пульта: " + state.connectUrls.join(" · ");
     updateSelectionControls();
 }
@@ -167,13 +180,14 @@ function renderPrepared() {
         const retrySeconds = Math.max(0,Math.ceil((e.retryAtMs - (state.serverTimeMs || Date.now())) / 1000));
         const retry = e.status === "RETRY_WAIT" ? `; попытка ${e.attempts}; ${retrySeconds ? "повтор через " + retrySeconds + " с" : "повтор готовится"}` : "";
         const size = `${(e.bytes / 1048576).toFixed(1)}${Number.isFinite(e.totalBytes) ? " / " + (e.totalBytes / 1048576).toFixed(1) : ""} МиБ`;
-        label.textContent = `${e.index}. ${e.title || e.videoId} — ${names[e.status] || e.status}${e.status === "DOWNLOADING" ? ": " + (phases[e.phase] || "Подготовка") : ""}; ${known ? e.percent + "% · " : ""}${size}${retry}${e.error ? "; " + (errors[e.error] || e.error) : ""}`;
+        label.textContent = `${e.index}. ${e.title || e.videoId} · ${formatDuration(e.durationSeconds)} — ${names[e.status] || e.status}${e.status === "DOWNLOADING" ? ": " + (phases[e.phase] || "Подготовка") : ""}; ${known ? e.percent + "% · " : ""}${size}${retry}${e.error ? "; " + (errors[e.error] || e.error) : ""}`;
         const progress = document.createElement("progress");
         progress.max = 100;
         if (known) progress.value = e.percent;
         else progress.removeAttribute("value");
         progress.hidden = !known && e.status !== "DOWNLOADING";
         progress.setAttribute("aria-label", `Готовность ролика ${e.index}`);
+        appendVideoThumbnail(label,e.videoId,e.title);
         row.append(label, progress);
         if (e.status === "READY" || e.status === "DOWNLOADING") row.append(preparedDeleteButton(e.videoId));
         rows.append(row);
@@ -181,7 +195,8 @@ function renderPrepared() {
     const files = byId("preparedFiles"); files.replaceChildren();
     (s.files || []).forEach(e => {
         const row = document.createElement("p");
-        row.textContent = `${e.title || e.videoId} — ${(e.bytes / 1048576).toFixed(1)} МиБ${e.inQueue ? "; в очереди" : "; вне очереди"}`;
+        row.textContent = `${e.title || e.videoId} · ${formatDuration(e.durationSeconds)} — ${(e.bytes / 1048576).toFixed(1)} МиБ${e.inQueue ? "; в очереди" : "; вне очереди"}`;
+        appendVideoThumbnail(row,e.videoId,e.title);
         if (!e.deleting) row.append(preparedDeleteButton(e.videoId));
         files.append(row);
     });
@@ -246,7 +261,8 @@ function renderQueue() {
         row.className = `queue-item${index === state.currentIndex ? " current" : ""}`;
         const title = document.createElement("div");
         title.className = "video-id";
-        title.textContent = `${index + 1}. ${item.title || item.videoId}${item.local ? " · своё видео" : ""}${index === state.currentIndex ? " — текущий" : ""}`;
+        title.textContent = `${index + 1}. ${item.title || item.videoId} · ${formatDuration(item.durationSeconds)}${item.local ? " · своё видео" : ""}${index === state.currentIndex ? " — текущий" : ""}`;
+        appendVideoThumbnail(title,item.videoId,item.title);
         row.append(title);
         const watch=queueButton("Смотреть", "select", item.queueItemId);
         row.append(watch);
@@ -279,6 +295,9 @@ function isQueueVersionConflict(error) {
 
 function apiErrorText(error) {
     const messages = {
+        PLAYBACK_CHANGED: "Ролик или очередь изменились. Проверьте текущий ролик и перемотайте заново.",
+        SEEK_UNAVAILABLE: "Сейчас перемотка недоступна. Дождитесь загрузки текущего ролика в плеер.",
+        SEEK_FAILED: "Не удалось перемотать. Текущий просмотр сохранён; попробуйте ещё раз.",
         QUEUE_VERSION_CONFLICT: "Очередь изменилась другим клиентом. Проверьте её и подтвердите действие заново.",
         IDEMPOTENCY_KEY_REUSED: "Ключ команды уже использован для другого действия. Обновите панель и подтвердите нужное действие заново.",
         COLLECTION_STORAGE_LIMIT: "Достигнут лимит сохранённых подборок. Удалите ненужную подборку и повторите сохранение.",
@@ -444,6 +463,9 @@ function forgetDevice() {
     state = null;
     pendingCommands = {};
     collections = [];
+    if(typeof clearThumbnails === "function")clearThumbnails();
+    currentThumbnailId=null;
+    if(typeof renderTimeline === "function")renderTimeline();
     localStorage.removeItem(DEVICE_KEY);
     localStorage.removeItem(COMMANDS_KEY);
     byId("retryCommandButton").hidden = true;
@@ -547,8 +569,8 @@ const availabilityNames = {
 
 function formatDuration(seconds) {
     if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return "Длительность неизвестна";
-    const minutes = Math.floor(seconds / 60);
-    return `${minutes}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+    const total=Math.floor(seconds),hours=Math.floor(total/3600),minutes=Math.floor(total/60)%60;
+    return `${hours?hours+":"+String(minutes).padStart(2,"0"):minutes}:${String(total%60).padStart(2,"0")}`;
 }
 
 function renderPreview() {
@@ -594,6 +616,7 @@ function renderPreview() {
         meta.className = "muted small entry-meta";
         meta.textContent = [entry.videoId, entry.channel, formatDuration(entry.durationSeconds), availabilityNames[entry.availability] || "Доступность не проверена"].filter(Boolean).join(" · ");
         content.append(title, meta);
+        if(entry.selectable)appendVideoThumbnail(content,entry.videoId,entry.title);
         row.append(input, content);
         byId("playlistEntries").append(row);
     });
@@ -738,7 +761,8 @@ function renderCollections() {
         const ids = document.createElement("ol");
         collection.videoIds.forEach(id => {
             const row = document.createElement("li");
-            row.textContent = collection.titles?.[id] || id;
+            row.textContent = (collection.titles?.[id] || id)+" · "+formatDuration(collection.durations?.[id]);
+            appendVideoThumbnail(row,id,collection.titles?.[id]);
             ids.append(row);
         });
         details.append(summary, ids);

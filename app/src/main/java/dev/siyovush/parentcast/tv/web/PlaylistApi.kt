@@ -18,8 +18,12 @@ internal class PlaylistApi(
     private val coordinator: PlaybackCoordinator,
     private val dispatcher: CallDispatcher,
     private val metadataTitle: (String) -> String = { "" },
+    private val metadataDuration: (String) -> Long? = { null },
     private val stateBody: () -> String,
 ) {
+    fun containsVideo(owner: String, id: String): Boolean = previews.containsVideo(owner, id) ||
+        collections.list().any { id in it.videoIds }
+
     fun handles(path: String): Boolean = path in setOf(
         "/api/playlists/preview", "/api/playlists/cancel", "/api/playlists/apply",
         "/api/collections/save", "/api/collections/apply", "/api/collections/delete",
@@ -149,6 +153,7 @@ internal class PlaylistApi(
         } }.filterValues { it.isNotBlank() }
         return JSONObject().put("id",collection.id).put("name",collection.name).put("videoIds",JSONArray(collection.videoIds))
             .put("createdAtMs",collection.createdAtMs).put("titles",JSONObject(titles))
+            .put("durations",JSONObject(collection.videoIds.mapNotNull { id -> metadataDuration(id)?.let { id to it } }.toMap()))
     }
 
     private fun response(code: Int, json: JSONObject) = ApiResponse(code, json.toString())

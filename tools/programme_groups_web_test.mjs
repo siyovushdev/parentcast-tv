@@ -20,4 +20,9 @@ await vm.runInContext(`programmeAction({dataset:{groupAction:'down',groupId:'gro
 request=JSON.parse(vm.runInContext('JSON.stringify(sent.at(-1))',ctx));assert.equal(request.path,'/api/queue/group-order');assert.deepEqual(request.payload.groupIds,['group-two','group-one']);assert.equal(request.payload.queueVersion,7);
 vm.runInContext('startQueueOrder("group-one");moveDraft("b",0);byId("queueSortMode").value="ready";sortDraft()',ctx);assert.equal(vm.runInContext('queueOrder.ids[0]',ctx),'a','Readiness sorting includes cached files outside the current download plan');vm.runInContext('moveDraft("b",0)',ctx);await vm.runInContext('applyQueueOrder()',ctx);
 request=JSON.parse(vm.runInContext('JSON.stringify(sent.at(-1))',ctx));assert.equal(request.path,'/api/queue/group-order');assert.deepEqual(request.payload.videoIds,['video000002','video000001']);assert.equal(request.payload.groupId,'group-one');
+vm.runInContext('state.positionMs=42000;state.finished=false;programmeViewKey=null;renderQueue()',ctx);
+const resumedRows=elements.get('queue').children[0].children.filter(n=>n.className?.startsWith('queue-item'));
+assert.equal(resumedRows[0].children[1].textContent,'Продолжить с 0:42');
+await vm.runInContext(`programmeAction({dataset:{groupAction:'watch-video',groupId:'group-one',itemId:'a'}})`,ctx);
+request=JSON.parse(vm.runInContext('JSON.stringify(sent.at(-1))',ctx));assert.equal(request.path,'/api/playback');assert.equal(request.payload.action,'PLAY');assert.equal(request.payload.positionMs,undefined);
 console.log('PASS: playlist cards, shared video references, readiness gate, safe titles, stable progress DOM, explicit group preparation/start/order and video draft (synthetic)');

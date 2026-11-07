@@ -49,14 +49,20 @@
         <section class="card">
             <h2>Состояние</h2>
             <p id="playerStatus" class="status">Нет данных</p>
-            <p id="currentTitle"></p>
+            <div id="currentVideo" class="current-video"><p id="currentTitle"></p></div>
             <p id="displayMessage" class="muted"></p>
             <p id="queueSummary" class="muted"></p>
+            <div id="playbackTimeline" class="playback-timeline">
+                <div class="timeline-times"><span id="playheadTime">0:00</span><span id="videoDuration">—:—</span></div>
+                <label class="timeline-label" for="playheadSlider">Позиция текущего ролика</label>
+                <input id="playheadSlider" type="range" min="0" max="1" step="1" value="0" disabled aria-label="Позиция текущего ролика">
+                <div class="controls"><button type="button" id="seekBack" class="secondary" disabled>−10 с</button><button type="button" id="seekForward" class="secondary" disabled>+10 с</button><span id="seekMessage" class="muted small" role="status"></span></div>
+            </div>
             <p id="updatedAt" class="muted"></p>
             <p id="playbackError" class="error"></p>
             <p id="diagnostics" class="muted small"></p>
             <div class="actions">
-                <button data-playback="PLAY">Играть</button>
+                <button id="resumePlayback" data-playback="PLAY">Смотреть</button>
                 <button data-playback="PAUSE_RESUME">Пауза / продолжить</button>
                 <button data-playback="NEXT">Следующий</button>
                 <button data-playback="STOP" class="danger">Стоп</button>
@@ -225,9 +231,11 @@
         </section>
     </div>
 </main>
+<script src="/thumbnails.js"></script>
 <script src="/app.js"></script>
 <script src="/media.js"></script>
 <script src="/sections.js"></script>
 <script src="/groups.js"></script>
+<script src="/timeline.js"></script>
 </body>
 </html>

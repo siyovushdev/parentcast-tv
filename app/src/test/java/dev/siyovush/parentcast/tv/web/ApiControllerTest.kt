@@ -57,6 +57,18 @@ class ApiControllerTest {
     }
 
     @Test
+    fun thumbnailsRequireAuthorizationAndValidHost() {
+        val f = Fixture()
+        assertEquals(401, f.controller.handle(request("GET", "/api/thumbnails/video000001", f.auth(null))).code)
+        val token = f.pair()
+        assertEquals(421, f.controller.handle(request("GET", "/api/thumbnails/video000001", f.auth(token) + ("host" to "evil.test:8765"))).code)
+        assertEquals(404, f.controller.handle(request("GET", "/api/thumbnails/video000001", f.auth(token))).code)
+        val devices = JSONObject(f.controller.handle(request("GET", "/api/devices", f.auth(token))).body).getJSONArray("devices")
+        f.controller.handle(request("POST", "/api/devices/revoke", f.auth(token), JSONObject().put("deviceId",devices.getJSONObject(0).getString("deviceId")).put("idempotencyKey","thumbnail-revoke").toString()))
+        assertEquals(401, f.controller.handle(request("GET", "/api/thumbnails/video000001", f.auth(token))).code)
+    }
+
+    @Test
     fun stateRequiresAuthorization() {
         val fixture = Fixture()
         val response = fixture.controller.handle(request("GET", "/api/state", fixture.auth(null)))
