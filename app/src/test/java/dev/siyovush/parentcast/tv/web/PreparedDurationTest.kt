@@ -33,4 +33,23 @@ class PreparedDurationTest {
         assertFalse(api.canPlay("vk:-1_1"));assertEquals(0,api.state().getInt("ready"))
         c.close()
     }
+    @Test fun readyFileInAnotherPlaylistIsStillMarkedAsInQueue()=runTest {
+        val first="video000001";val second="video000002";val orphan="video000003"
+        val store=PreparedStore(temp.newFolder())
+        store.write(PreparationState(plan=listOf(first),entries=listOf(first,second,orphan).associateWith {PreparedEntry(it,PreparationStatus.READY)}))
+        val source=object:YouTubeSource{override suspend fun resolve(videoId:String):ResolvedVideo=error("No network")}
+        val library=PreparedLibrary(store,source,TrackDownloader{_,_,_,_->error("No download")},this,{_,_,_->})
+        val p=object:PlaybackPlayer {
+            override fun setListener(listener:PlaybackPlayer.Listener){};override fun prepare(generation:Long,video:ResolvedVideo,positionMs:Long,playWhenReady:Boolean){}
+            override fun play(){};override fun pause(){};override fun stop(){};override fun currentPositionMs()=0L;override fun release(){}
+        }
+        val queue=AtomicQueueStore(File(temp.root,"queue.json"))
+        queue.write(QueueState(items=listOf(first,second).map {QueueItem(it,it)},currentIndex=0))
+        val c=PlaybackCoordinator(source,queue,p,this,StandardTestDispatcher(testScheduler))
+        val files=PreparedApi(library,c,object:CallDispatcher{override fun <T> call(block:()->T)=block()}).state().getJSONArray("files")
+        val inQueue=(0 until files.length()).associate {files.getJSONObject(it).let {it.getString("videoId") to it.getBoolean("inQueue")}}
+        assertEquals(mapOf(first to true,second to true,orphan to false),inQueue)
+        assertTrue(library.snapshot().entries.values.all {it.status==PreparationStatus.READY})
+        c.close()
+    }
 }

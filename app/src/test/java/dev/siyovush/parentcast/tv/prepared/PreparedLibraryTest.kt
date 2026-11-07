@@ -83,6 +83,45 @@ class PreparedLibraryTest {
         assertEquals("NO_SPACE", library.snapshot().entries[second]!!.error)
         assertFalse(library.hasPending())
     }
+    @Test fun preparingSelectedPlaylistRetriesNoSpaceAfterExplicitDeletionAndKeepsItsOrder() = runBlocking {
+        val storage=store();val order=mutableListOf<String>()
+        val library=PreparedLibrary(storage,object:YouTubeSource {override suspend fun resolve(videoId:String)=video(videoId).also {order+=videoId}},downloader(),this,{_,_,_->},limit=3)
+        library.configure(true,listOf(first,second),"playlist");library.runWorker()
+        assertEquals("NO_SPACE",library.snapshot().entries.getValue(second).error)
+        // Free space only on an explicit parent command, then restart with the failed episode first.
+        library.deleteMedia(first);yield()
+        library.configure(true,listOf(second,first),"playlist")
+        assertEquals(PreparationStatus.WAITING,library.snapshot().entries.getValue(second).status)
+        assertEquals("",library.snapshot().entries.getValue(second).error)
+        library.runWorker()
+        assertEquals(listOf(first,second,second,first),order)
+        assertTrue(storage.verify(library.snapshot().entries.getValue(second)))
+        assertEquals("NO_SPACE",library.snapshot().entries.getValue(first).error)
+        assertEquals(listOf(second,first),library.snapshot().plan)
+        assertTrue(library.snapshot().paused)
+    }
+    @Test fun prepareRetriesOnlySelectedFailuresAndPreservesReadyFilesAndRetainedPartial() = runBlocking {
+        val storage=store();val third="video000003";val fourth="video000004"
+        val ready=downloader().download(video(first).video,storage.track(first),3){_,_->}
+        File(storage.track(second).path+".part").writeText("partial")
+        storage.write(PreparationState(enabled=true,paused=true,entries=mapOf(
+            first to PreparedEntry(first,PreparationStatus.READY,tracks=listOf(ready)),
+            second to PreparedEntry(second,PreparationStatus.ERROR,error="NO_SPACE",bytes=7),
+            third to PreparedEntry(third,PreparationStatus.RETRY_WAIT,error="NETWORK_RETRY",attempts=3,retryAtMs=99999),
+            fourth to PreparedEntry(fourth,PreparationStatus.ERROR,error="UNAVAILABLE"))))
+        val library=PreparedLibrary(storage,object:YouTubeSource {override suspend fun resolve(videoId:String):ResolvedVideo=error("No implicit worker")},downloader(),this,{_,_,_->})
+        library.configure(true,listOf(first,second,third),"playlist")
+        assertFalse(library.snapshot().paused)
+        assertTrue(storage.verify(library.snapshot().entries.getValue(first)))
+        assertEquals("partial",File(storage.track(second).path+".part").readText())
+        for(id in listOf(second,third)) {
+            val e=library.snapshot().entries.getValue(id)
+            assertEquals(PreparationStatus.WAITING,e.status);assertEquals("",e.error)
+            assertEquals(0,e.attempts);assertEquals(0L,e.retryAtMs)
+        }
+        assertEquals("UNAVAILABLE",library.snapshot().entries.getValue(fourth).error)
+        assertEquals(listOf(first,second,third),storage.read().plan)
+    }
     @Test fun pausePreservesPartialAndWaiterCannotPublishLateReady() = runBlocking {
         val entered = CompletableDeferred<Unit>(); val storage = store()
         val library = PreparedLibrary(storage, object : YouTubeSource { override suspend fun resolve(videoId: String) = video(videoId) },
@@ -190,9 +229,49 @@ class PreparedLibraryTest {
         val library = PreparedLibrary(storage, object : YouTubeSource { override suspend fun resolve(videoId: String) = video(videoId) }, downloader(), this, { _, _, _ -> })
         assertEquals(PreparationStatus.WAITING, library.snapshot().entries[first]!!.status)
         library.runWorker(); assertEquals(3, storage.track(first).length())
-        library.schedule(listOf(second)); yield(); library.runWorker()
+        library.syncQueue(dev.siyovush.parentcast.tv.queue.QueueState(items=listOf(dev.siyovush.parentcast.tv.queue.QueueItem(second,second)),currentIndex=0)); yield(); library.runWorker()
         assertTrue(storage.track(first).exists()); assertTrue(storage.track(second).isFile)
         assertEquals(1, library.cleanup())
         assertFalse(storage.track(first).exists()); assertTrue(storage.track(second).isFile)
+    }
+
+    @Test fun fullBudgetNeverAutomaticallyDeletesOtherPlaylistsOrUnqueuedReadyFiles() = runBlocking {
+        for(capacity in 6L..7L) {
+            val storage=store();val third="video000003"
+            val library=PreparedLibrary(storage,object:YouTubeSource {override suspend fun resolve(videoId:String)=video(videoId)},downloader(),this,{_,_,_->},limit=capacity)
+            library.configure(true,listOf(first,second));library.runWorker()
+            assertEquals(6,storage.usedBytes())
+            // Both the other playlist and a file retained after removing a queue item must survive.
+            library.configure(true,listOf(third));library.runWorker()
+            assertTrue(library.snapshot().paused)
+            assertEquals("NO_SPACE",library.snapshot().entries.getValue(third).error)
+            assertTrue(storage.verify(library.snapshot().entries.getValue(first)))
+            assertTrue(storage.verify(library.snapshot().entries.getValue(second)))
+            assertEquals(6,storage.usedBytes())
+        }
+    }
+
+    @Test fun explicitCleanupProtectsTheWholeQueueRatherThanOnlyTheSelectedDownloadPlan() = runBlocking {
+        val storage=store();val third="video000003"
+        val library=PreparedLibrary(storage,object:YouTubeSource {override suspend fun resolve(videoId:String)=video(videoId)},downloader(),this,{_,_,_->})
+        library.configure(true,listOf(first,second,third));library.runWorker()
+        val group=dev.siyovush.parentcast.tv.queue.QueueGroup.fixed("one","Первый",listOf(first),dev.siyovush.parentcast.tv.queue.QueueGroupSource.VK_PLAYLIST)
+        val other=dev.siyovush.parentcast.tv.queue.QueueGroup.fixed("two","Второй",listOf(second),dev.siyovush.parentcast.tv.queue.QueueGroupSource.COLLECTION)
+        val q=dev.siyovush.parentcast.tv.queue.QueueState(items=listOf(first,second).map {dev.siyovush.parentcast.tv.queue.QueueItem(it,it)},currentIndex=0,groups=listOf(group,other))
+        library.configure(true,group.videoIds,group.id);library.syncQueue(q)
+        assertEquals(listOf(first),library.snapshot().plan)
+        assertEquals(1,library.cleanup())
+        assertTrue(storage.verify(library.snapshot().entries.getValue(first)))
+        assertTrue(storage.verify(library.snapshot().entries.getValue(second)))
+        assertFalse(storage.track(third).exists())
+        assertEquals(0,library.cleanup())
+    }
+
+    @Test fun cleanupWithoutCurrentQueueSnapshotCannotDeleteFiles() = runBlocking {
+        val storage=store()
+        val library=PreparedLibrary(storage,object:YouTubeSource {override suspend fun resolve(videoId:String)=video(videoId)},downloader(),this,{_,_,_->})
+        library.configure(true,listOf(first));library.runWorker();library.schedule(emptyList())
+        try {library.cleanup();fail("Unknown queue must not authorize deletion")} catch(e:IllegalStateException) {assertEquals("BUSY",e.message)}
+        assertTrue(storage.verify(library.snapshot().entries.getValue(first)))
     }
 }
