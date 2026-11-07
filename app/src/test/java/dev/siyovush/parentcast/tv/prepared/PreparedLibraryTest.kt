@@ -71,7 +71,7 @@ class PreparedLibraryTest {
         assertEquals("NO_SPACE", library.snapshot().entries[second]!!.error)
         assertFalse(library.hasPending())
     }
-    @Test fun cancelWaitAndWorkerCannotPublishLateReady() = runBlocking {
+    @Test fun pausePreservesPartialAndWaiterCannotPublishLateReady() = runBlocking {
         val entered = CompletableDeferred<Unit>(); val storage = store()
         val library = PreparedLibrary(storage, object : YouTubeSource { override suspend fun resolve(videoId: String) = video(videoId) },
             TrackDownloader { _, target, _, _ -> File(target.path + ".part").writeText("partial"); entered.complete(Unit); awaitCancellation() }, this, { _, _, _ -> })
@@ -84,7 +84,8 @@ class PreparedLibraryTest {
         library.pause(); job.join()
         assertEquals(PreparationStatus.WAITING, library.snapshot().entries[first]!!.status)
         assertFalse(storage.track(first).exists())
-        assertFalse(File(storage.track(first).path + ".part").exists())
+        assertTrue(File(storage.track(first).path + ".part").exists())
+        assertEquals(7,library.snapshot().entries[first]!!.bytes)
     }
     @Test fun cancelledSocketIOExceptionRemainsWaitingRatherThanDownloadError() = runBlocking {
         val entered = CompletableDeferred<Unit>(); val storage = store()

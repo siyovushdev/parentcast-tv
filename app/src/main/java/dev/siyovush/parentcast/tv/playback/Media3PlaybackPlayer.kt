@@ -148,7 +148,7 @@ class Media3PlaybackPlayer(
         if (isLocal) {
             val file = java.io.File(java.net.URI(spec.url)).canonicalFile
             val root = java.io.File(context.noBackupFilesDir, "prepared-programme").canonicalFile
-            require(file.parentFile == root && file.name.matches(Regex("[A-Za-z0-9_-]{11}[.](video|audio)[.]mp4")))
+            require(file.parentFile == root && file.name.matches(Regex("(?:[A-Za-z0-9_-]{11}|local_[0-9a-f]{32})[.](video|audio)[.]mp4")))
         }
         val cookieHeader = if (isLocal) null else dev.siyovush.parentcast.tv.youtube.CookieHeaderCodec.merge(
             emptyList(), session.cookiesFor(spec.url.toHttpUrl()),

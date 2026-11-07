@@ -15,10 +15,10 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
             entries.put(JSONObject().put("index", index + 1).put("videoId", id).put("title", e.title).put("status", if (id in s.deleting) "DELETING" else e.status.name)
                 .put("bytes", e.bytes).put("totalBytes", e.total.takeIf { e.totalKnown || e.status == PreparationStatus.READY } ?: JSONObject.NULL)
                 .put("percent", if (id in s.deleting) JSONObject.NULL else preparationPercent(e) ?: JSONObject.NULL).put("phase", e.phase)
-                .put("error", e.error))
+                .put("error", e.error).put("attempts", e.attempts).put("retryAtMs", e.retryAtMs))
         }
         val files = JSONArray()
-        s.entries.values.filter { it.status == PreparationStatus.READY || it.id in s.deleting }.forEach { e ->
+        s.entries.values.filter { !it.local && (it.status == PreparationStatus.READY || it.id in s.deleting) }.forEach { e ->
             files.put(JSONObject().put("videoId", e.id).put("title", e.title).put("bytes", e.bytes)
                 .put("deleting", e.id in s.deleting).put("inQueue", e.id in s.plan))
         }
@@ -38,7 +38,7 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
         if (action in setOf("ENABLE", "DELETE", "DELETE_ALL") && json.optLong("queueVersion", -1) != snapshot.queueState.version) {
             return 409 to "{\"error\":\"QUEUE_VERSION_CONFLICT\"}"
         }
-        val ids = snapshot.queueState.let { it.items.drop(it.currentIndex.coerceAtLeast(0)).map { item -> item.videoId } }
+        val ids = snapshot.queueState.let { it.items.drop(it.currentIndex.coerceAtLeast(0)).filterNot { item -> item.local }.map { item -> item.videoId } }
         return try {
             if (action in setOf("DELETE", "DELETE_ALL")) {
                 val result = dispatcher.call {
@@ -68,7 +68,7 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
                 }
             }
             dispatcher.call { val q = coordinator.currentSnapshot().queueState
-                library.schedule(q.items.drop(q.currentIndex.coerceAtLeast(0)).map { it.videoId }) }
+                library.schedule(q.items.drop(q.currentIndex.coerceAtLeast(0)).filterNot { it.local }.map { it.videoId }) }
             (if (action in setOf("DELETE", "DELETE_ALL", "RETRY_DELETE")) 202 else 200) to state().toString()
         } catch (error: Exception) {
             (if (error.message == "BUSY") 409 else 503) to "{\"error\":\"PREPARATION_BUSY_OR_STORAGE_ERROR\"}"
@@ -78,7 +78,7 @@ internal class PreparedApi(private val library: PreparedLibrary, private val coo
 
 internal fun preparationPercent(e: PreparedEntry): Int? = when {
     e.status == PreparationStatus.READY -> 100
-    e.status == PreparationStatus.WAITING -> 0
+    e.status == PreparationStatus.WAITING -> if (e.bytes == 0L) 0 else if (e.totalKnown && e.total > 0) (e.bytes.toDouble() * 100 / e.total).toInt().coerceIn(0,99) else null
     e.status == PreparationStatus.DOWNLOADING && e.totalKnown && e.total > 0 ->
         (e.bytes.toDouble() * 100 / e.total).toInt().coerceIn(0, 99)
     else -> null

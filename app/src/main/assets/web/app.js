@@ -5,6 +5,7 @@ const COMMANDS_KEY = "parentcast.commands.v1";
 let device = readJson(DEVICE_KEY, null);
 let pendingCommands = readJson(COMMANDS_KEY, {});
 let state = null;
+let renderedQueueKey = null;
 let refreshing = false;
 let signingIn = false;
 let preview = null;
@@ -152,16 +153,18 @@ function renderPrepared() {
     byId("preparedStorage").textContent = `Скачано ${used} из ${gib(s.limitBytes)} ГиБ. Свободно на приставке ${gib(s.freeBytes)} ГиБ; резерв ${gib(s.reserveBytes)} ГиБ. Можно скачать ещё ${gib(s.additionalBytes)} ГиБ.`;
     const rows = byId("preparedEntries");
     rows.replaceChildren();
-    const names = {WAITING: "В очереди загрузки", DOWNLOADING: "Скачивание", READY: "Готово", ERROR: "Ошибка", DELETED: "Файл удалён", DELETING: "Удаляем файл"};
+    const names = {WAITING: "В очереди загрузки", DOWNLOADING: "Скачивание", READY: "Готово", ERROR: "Ошибка", DELETED: "Файл удалён", DELETING: "Удаляем файл", RETRY_WAIT: "Ожидаем восстановления сети"};
     const phases = {INFO: "Получаем данные о ролике", VIDEO: "Загружаем видео", AUDIO: "Загружаем звук", VERIFY: "Проверяем загрузку"};
-    const errors = {YOUTUBE_AUTH_REQUIRED: "YouTube требует авторизацию. Включите действующую тестовую сессию на ТВ и повторите подготовку", NO_SPACE: "Недостаточно места в лимите / свободного места", UNSUPPORTED: "Нужен публичный завершённый ролик", DOWNLOAD_FAILED: "Загрузка прервана. Проверьте сеть и нажмите «Повторить ошибки»", FILE_DAMAGED: "Файл повреждён. Повторите загрузку"};
+    const errors = {STORAGE_ERROR: "Хранилище недоступно. Проверьте место и повторите подготовку",UNAVAILABLE: "Ролик больше недоступен на YouTube",YOUTUBE_AUTH_REQUIRED: "YouTube требует авторизацию. Включите действующую тестовую сессию на ТВ и повторите подготовку", NO_SPACE: "Недостаточно места в лимите / свободного места", UNSUPPORTED: "Нужен публичный завершённый ролик", NETWORK_RETRY: "Сеть прервалась. Повторим автоматически", DOWNLOAD_FAILED: "Загрузка прервана. Проверьте сеть и нажмите «Повторить ошибки»", FILE_DAMAGED: "Файл повреждён. Повторите загрузку"};
     s.entries.forEach(e => {
         const row = document.createElement("div");
         row.className = "download-row";
         const label = document.createElement("p");
         const known = Number.isFinite(e.percent);
+        const retrySeconds = Math.max(0,Math.ceil((e.retryAtMs - (state.serverTimeMs || Date.now())) / 1000));
+        const retry = e.status === "RETRY_WAIT" ? `; попытка ${e.attempts}; ${retrySeconds ? "повтор через " + retrySeconds + " с" : "повтор готовится"}` : "";
         const size = `${(e.bytes / 1048576).toFixed(1)}${Number.isFinite(e.totalBytes) ? " / " + (e.totalBytes / 1048576).toFixed(1) : ""} МиБ`;
-        label.textContent = `${e.index}. ${e.title || e.videoId} — ${names[e.status] || e.status}${e.status === "DOWNLOADING" ? ": " + (phases[e.phase] || "Подготовка") : ""}; ${known ? e.percent + "% · " : ""}${size}${e.error ? "; " + (errors[e.error] || e.error) : ""}`;
+        label.textContent = `${e.index}. ${e.title || e.videoId} — ${names[e.status] || e.status}${e.status === "DOWNLOADING" ? ": " + (phases[e.phase] || "Подготовка") : ""}; ${known ? e.percent + "% · " : ""}${size}${retry}${e.error ? "; " + (errors[e.error] || e.error) : ""}`;
         const progress = document.createElement("progress");
         progress.max = 100;
         if (known) progress.value = e.percent;
@@ -221,6 +224,10 @@ async function preparationAction(action, videoId) {
 }
 
 function renderQueue() {
+    if (typeof renderQueueEditor === "function" && renderQueueEditor()) { renderedQueueKey=null; return; }
+    const key=JSON.stringify([state.currentIndex,state.items.map(e=>[e.queueItemId,e.videoId,e.local,e.title])]);
+    if(renderedQueueKey===key)return;
+    renderedQueueKey=key;
     const container = byId("queue");
     container.replaceChildren();
     if (!state.items.length) {
@@ -235,8 +242,10 @@ function renderQueue() {
         row.className = `queue-item${index === state.currentIndex ? " current" : ""}`;
         const title = document.createElement("div");
         title.className = "video-id";
-        title.textContent = `${index + 1}. ${item.videoId}${index === state.currentIndex ? " — текущий" : ""}`;
+        title.textContent = `${index + 1}. ${item.title || item.videoId}${item.local ? " · своё видео" : ""}${index === state.currentIndex ? " — текущий" : ""}`;
         row.append(title);
+        const watch=queueButton("Смотреть", "select", item.queueItemId);
+        row.append(watch);
         if (index > state.currentIndex) {
             const controls = document.createElement("div");
             controls.className = "controls";
@@ -275,6 +284,10 @@ function apiErrorText(error) {
         COLLECTION_NOT_FOUND: "Подборка уже удалена. Обновите список сохранённых подборок.",
         PREVIEW_BUSY: "Приставка уже получает несколько списков. Дождитесь завершения или отмените другой предпросмотр и повторите.",
         COMMAND_STORAGE_LIMIT: "Достигнут лимит сохранённых команд. Повторите позже.",
+        IMPORT_BUSY: "Другая передача ещё завершается. Повторите через несколько секунд.",
+        USB_UNAVAILABLE_OR_PERMISSION_REQUIRED: "Флешка недоступна. Подключите её и выберите папку в родительском меню на ТВ.",
+        BAD_MEDIA_INPUT: "Проверьте название и размер файла. Он должен помещаться в лимит 10 ГиБ.",
+        LOCAL_FILE_NOT_FOUND: "Файл уже удалён. Обновите список своих видео.",
         OPEN_PLAYER_ON_TV: "Для просмотра сначала откройте ParentCast на телевизоре. Очередь и подготовка доступны из пульта.",
         FILE_IN_USE: "Ролик используется плеером. Сначала остановите его и подтвердите удаление заново.",
         PREPARATION_BUSY_OR_STORAGE_ERROR: "Подготовка ещё занята или хранилище недоступно. Остановите подготовку, дождитесь завершения отмены и повторите.",
@@ -359,7 +372,9 @@ async function playback(action) {
 
 async function queueAction(action, id) {
     if (!state) return;
-    if (action === "delete") {
+    if (action === "select") {
+        await perform(`select-${id}-${commandKey()}`, "/api/queue/select", {queueItemId:id,queueVersion:state.queueVersion,play:true,idempotencyKey:commandKey()});
+    } else if (action === "delete") {
         await perform(`delete-${id}-${commandKey()}`, "/api/queue/delete", {
             queueItemId: id,
             queueVersion: state.queueVersion,
@@ -766,7 +781,7 @@ document.querySelectorAll("[data-playback]").forEach(button => {
 });
 byId("queue").addEventListener("click", event => {
     const button = event.target.closest("button[data-action]");
-    if (button) run(() => queueAction(button.dataset.action, button.dataset.id));
+    if (button && !button.dataset.action.startsWith("draft-")) run(() => queueAction(button.dataset.action, button.dataset.id));
 });
 
 ["preparedEntries", "preparedFiles"].forEach(id => byId(id).addEventListener("click", event => {
@@ -786,5 +801,5 @@ if (device) {
     refreshCollections();
 }
 setInterval(() => {
-    if (device && !document.hidden) refreshState();
+    if (device && !document.hidden) { refreshState(); if (typeof refreshLocalMedia === "function") refreshLocalMedia(); }
 }, 2000);

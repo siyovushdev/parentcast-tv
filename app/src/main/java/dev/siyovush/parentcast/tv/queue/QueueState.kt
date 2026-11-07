@@ -3,10 +3,11 @@ package dev.siyovush.parentcast.tv.queue
 data class QueueItem(
     val queueItemId: String,
     val videoId: String,
+    val local: Boolean = false,
 ) {
     init {
         require(queueItemId.isNotBlank())
-        require(VIDEO_ID_PATTERN.matches(videoId))
+        require(if (local) Regex("local_[0-9a-f]{32}").matches(videoId) else VIDEO_ID_PATTERN.matches(videoId))
     }
 
     companion object {

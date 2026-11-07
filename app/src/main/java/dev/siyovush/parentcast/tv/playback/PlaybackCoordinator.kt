@@ -26,6 +26,7 @@ class PlaybackCoordinator(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val authorizationGate: () -> Boolean = { true },
     private val autoResumeOnStartup: Boolean = true,
+    private val localSource: YouTubeSource? = null,
 ) : PlaybackPlayer.Listener {
     private var state = QueueState.Empty
     private var status = PlaybackStatus.IDLE
@@ -104,12 +105,12 @@ class PlaybackCoordinator(
     }
 
     /** One queue transaction; no player calls and no change of playback intent. */
-    fun addBatch(videoIds: List<String>, expectedVersion: Long, commandKey: String, requestFingerprint: String? = null): BatchAddResult {
-        require(videoIds.size in 1..500 && videoIds.all { Regex("[A-Za-z0-9_-]{11}").matches(it) })
+    fun addBatch(videoIds: List<String>, expectedVersion: Long, commandKey: String, requestFingerprint: String? = null, local: Boolean = false): BatchAddResult {
+        require(videoIds.size in 1..500 && videoIds.all { if(local) Regex("local_[0-9a-f]{32}").matches(it) else Regex("[A-Za-z0-9_-]{11}").matches(it) })
         require(commandKey.length in 8..300)
         if (closed) return BatchAddResult.STORAGE_ERROR
         val fingerprint = requestFingerprint ?: java.security.MessageDigest.getInstance("SHA-256")
-            .digest((expectedVersion.toString() + "|" + videoIds.joinToString(",")).toByteArray())
+            .digest((expectedVersion.toString() + "|" + videoIds.joinToString(",") + if (local) "|local" else "").toByteArray())
             .joinToString("") { "%02x".format(it) }
         val now = System.currentTimeMillis()
         val receipts = state.batchReceipts.filter { now - it.createdAtMs <= 86_400_000L }
@@ -118,7 +119,7 @@ class PlaybackCoordinator(
         }
         if (state.version != expectedVersion) return BatchAddResult.CONFLICT
         if (receipts.size >= 1000) return BatchAddResult.RECEIPT_LIMIT
-        val items = videoIds.map { QueueItem(UUID.randomUUID().toString(), it) }
+        val items = videoIds.map { QueueItem(UUID.randomUUID().toString(), it, local) }
         val updated = state.copy(
             items = state.items + items,
             currentIndex = if (state.items.isEmpty()) 0 else state.currentIndex,
@@ -144,7 +145,7 @@ class PlaybackCoordinator(
         error = null
         refreshAttempted = false
         persist()
-        if (!authorizationGate()) {
+        if (!authorizationGate() && state.currentItem?.local != true) {
             status = PlaybackStatus.WAITING_FOR_SESSION
             emit()
             return
@@ -161,7 +162,7 @@ class PlaybackCoordinator(
 
     fun onSessionChanged() {
         if (closed || startupStorageBlocked) return
-        if (!authorizationGate()) {
+        if (!authorizationGate() && state.currentItem?.local != true) {
             if (state.intent != PlaybackIntent.STOP && !state.finished) {
                 status = PlaybackStatus.WAITING_FOR_SESSION
                 emit()
@@ -246,12 +247,48 @@ class PlaybackCoordinator(
         error = null
         refreshAttempted = false
         persist()
-        if (!authorizationGate()) {
+        if (!authorizationGate() && state.currentItem?.local != true) {
             status = PlaybackStatus.WAITING_FOR_SESSION
             emit()
             return
         }
         prepareCurrent()
+    }
+
+    /** Explicit parent selection, without inserting another copy into the programme. */
+    fun selectQueued(id: String, expectedVersion: Long, positionMs: Long, play: Boolean, key: String, fingerprint: String): BatchAddResult {
+        if(closed) return BatchAddResult.STORAGE_ERROR
+        batchReplay(key,fingerprint)?.let { return it }
+        if(state.version!=expectedVersion) return BatchAddResult.CONFLICT
+        val index=state.items.indexOfFirst { it.queueItemId==id }
+        require(index>=0 && positionMs in 0..604_800_000L)
+        val now=System.currentTimeMillis();val receipts=state.batchReceipts.filter { now-it.createdAtMs<=86_400_000 }
+        if(receipts.size>=1000)return BatchAddResult.RECEIPT_LIMIT
+        val updated=state.copy(currentIndex=index,positionMs=positionMs,intent=if(play)PlaybackIntent.PLAY else PlaybackIntent.STOP,
+            finished=false,version=state.version+1,batchReceipts=receipts+BatchReceipt(key,fingerprint,now))
+        try {store.write(updated)} catch (_:Exception){return BatchAddResult.STORAGE_ERROR}
+        state=updated;invalidateRequest();currentTitle="";diagnostics="";error=null;refreshAttempted=false;status=PlaybackStatus.STOPPED;emit()
+        if(play)prepareCurrent()
+        return BatchAddResult.APPLIED
+    }
+
+    /** Reorder only the pending suffix; receipt and queue commit share the same atomic file. */
+    fun reorderPending(ids: List<String>, expectedVersion: Long, key: String, fingerprint: String): BatchAddResult {
+        if (closed) return BatchAddResult.STORAGE_ERROR
+        batchReplay(key,fingerprint)?.let { return it }
+        if (expectedVersion != state.version) return BatchAddResult.CONFLICT
+        val pending = state.pendingItems
+        require(ids.size == pending.size && ids.distinct().size == ids.size && ids.toSet() == pending.map { it.queueItemId }.toSet())
+        val now = System.currentTimeMillis()
+        val receipts = state.batchReceipts.filter { now - it.createdAtMs <= 86_400_000 }
+        if(receipts.size >= 1000) return BatchAddResult.RECEIPT_LIMIT
+        val byId = pending.associateBy { it.queueItemId }
+        val updated = state.copy(items = state.items.take(state.currentIndex + 1) + ids.map { byId.getValue(it) }, version = state.version + 1,
+            batchReceipts = receipts + BatchReceipt(key,fingerprint,now))
+        try { store.write(updated) } catch (_: Exception) { return BatchAddResult.STORAGE_ERROR }
+        state = updated
+        emit()
+        return BatchAddResult.APPLIED
     }
 
     fun movePending(queueItemId: String, moveUp: Boolean) {
@@ -402,7 +439,7 @@ class PlaybackCoordinator(
 
     private fun prepareCurrent(preserveRefreshAttempt: Boolean = false) {
         val current = state.currentItem ?: return
-        if (!authorizationGate()) {
+        if (!authorizationGate() && state.currentItem?.local != true) {
             status = PlaybackStatus.WAITING_FOR_SESSION
             emit()
             return
@@ -416,7 +453,7 @@ class PlaybackCoordinator(
         extractionJob = scope.launch {
             try {
                 val resolved = withContext(ioDispatcher) {
-                    source.resolve(current.videoId)
+                    if (current.local) (localSource ?: error("LOCAL_SOURCE_UNAVAILABLE")).resolve(current.videoId) else source.resolve(current.videoId)
                 }
                 handleResolved(requestGeneration, current.queueItemId, resolved)
             } catch (error: CancellationException) {

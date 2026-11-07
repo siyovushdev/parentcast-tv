@@ -7,6 +7,7 @@ data class StreamSpec(
     val mimeType: String,
     val headers: Map<String, String>,
     val sizeBytes: Long? = null,
+    val resumeIdentity: String = "",
 )
 
 data class ResolvedVideo(

@@ -81,6 +81,7 @@ open class MainActivity : Activity() {
     private var serviceRuntime: dev.siyovush.parentcast.tv.home.ParentCastRuntime? = null
     private var serviceBound = false
     private var panelUrlIndex = 0
+    private var usbChoiceStarted = 0L
     private val runtimeObserver: (CoordinatorSnapshot) -> Unit = { render(it) }
     private val serviceConnection = object : android.content.ServiceConnection {
         override fun onServiceConnected(name: android.content.ComponentName, binder: android.os.IBinder) {
@@ -184,6 +185,19 @@ open class MainActivity : Activity() {
         }
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        super.onActivityResult(requestCode,resultCode,data)
+        if(requestCode != 1102) return
+        val started=usbChoiceStarted; usbChoiceStarted=0
+        if(started==0L || retired || android.os.SystemClock.elapsedRealtime()-started>300_000 || resultCode!=RESULT_OK) return
+        val uri=data?.data ?: return
+        val message=try {
+            serviceRuntime?.usb?.grant(uri,data.flags) ?: error("SERVICE_UNAVAILABLE")
+            "Папка подключена. В веб-пульте откройте раздел USB и выберите видео."
+        } catch (_: Exception) { "Не удалось открыть папку. Повторите выбор из меню родителя." }
+        android.widget.Toast.makeText(this,message,android.widget.Toast.LENGTH_LONG).show()
+    }
+
     private fun connectRuntime(runtime: dev.siyovush.parentcast.tv.home.ParentCastRuntime) {
         serviceRuntime = runtime
         youTubeSession = runtime.session
@@ -196,6 +210,17 @@ open class MainActivity : Activity() {
         ownerReady = true
         renderConnectInfo()
         debugRoot.findViewById<Button>(R.id.nextPanelAddressButton).setOnClickListener { if (requireParent()) { panelUrlIndex++; renderConnectInfo() } }
+        debugRoot.findViewById<Button>(R.id.usbFolderButton).setOnClickListener {
+            if (!requireParent()) return@setOnClickListener
+            usbChoiceStarted = android.os.SystemClock.elapsedRealtime()
+            try {
+                startActivityForResult(android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE)
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION), 1102)
+            } catch (_: Exception) { usbChoiceStarted = 0; debugStatus.text = "Выбор папки недоступен. Можно загрузить файл через браузер." }
+        }
+        debugRoot.findViewById<Button>(R.id.usbDisconnectButton).setOnClickListener {
+            if (requireParent()) { runtime.usb.forget(); debugStatus.text = "Доступ к исходной папке отключён. Импортированные видео сохранены." }
+        }
         savePinButton.setOnClickListener { savePin() }
         renderPinUi()
         configureParentModeControls()

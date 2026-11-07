@@ -15,7 +15,7 @@ interface QueueStore {
 }
 
 object QueueSnapshotCodec {
-    private const val VERSION = 1
+    private const val VERSION = 2
 
     fun encode(state: QueueState): String {
         val items = JSONArray()
@@ -23,7 +23,7 @@ object QueueSnapshotCodec {
             items.put(
                 JSONObject()
                     .put("queueItemId", item.queueItemId)
-                    .put("videoId", item.videoId),
+                    .put("videoId", item.videoId).put("local", item.local),
             )
         }
         return JSONObject()
@@ -45,7 +45,7 @@ object QueueSnapshotCodec {
 
     fun decode(serialized: String): QueueState {
         val root = JSONObject(serialized)
-        if (root.getInt("version") != VERSION) {
+        if (root.getInt("version") !in 1..VERSION) {
             throw JSONException("Unsupported queue snapshot version")
         }
         val serializedItems = root.getJSONArray("items")
@@ -56,6 +56,7 @@ object QueueSnapshotCodec {
                     QueueItem(
                         queueItemId = item.getString("queueItemId"),
                         videoId = item.getString("videoId"),
+                        local = item.optBoolean("local", false),
                     ),
                 )
             }

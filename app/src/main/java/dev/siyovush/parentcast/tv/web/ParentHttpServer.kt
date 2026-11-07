@@ -8,6 +8,11 @@ internal class ParentHttpServer(
     private val controller: ApiController,
 ) : NanoHTTPD("0.0.0.0", port) {
     override fun serve(session: IHTTPSession): Response {
+        if(session.uri.startsWith("/api/local/upload/")) {
+            val request=ApiRequest(session.method.name,session.uri,session.headers.mapKeys { it.key.lowercase() },"",session.remoteIpAddress)
+            val result=controller.upload(request,session.headers["content-length"]?.toLongOrNull() ?: -1,session.inputStream)
+            return respond(result).apply { closeConnection(true) }
+        }
         val tooLarge = session.headers["content-length"]?.toLongOrNull()?.let { it < 0 || it > 65_536 } == true
         val request = ApiRequest(
             method = session.method.name,
@@ -17,7 +22,9 @@ internal class ParentHttpServer(
             clientKey = session.remoteIpAddress,
         )
         val apiResponse = if (tooLarge) ApiResponse(413, "{\"error\":\"BODY_TOO_LARGE\"}") else controller.handle(request)
-        return newFixedLengthResponse(
+        return respond(apiResponse)
+    }
+    private fun respond(apiResponse: ApiResponse): Response = newFixedLengthResponse(
             responseStatus(apiResponse.code),
             apiResponse.contentType,
             apiResponse.body,
@@ -32,7 +39,6 @@ internal class ParentHttpServer(
                     "img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'self'",
             )
         }
-    }
 
     private fun readBody(session: IHTTPSession): String = try {
         // JSON uses UTF-8; NanoHTTPD 2.3.1 otherwise defaults missing charset to US-ASCII.

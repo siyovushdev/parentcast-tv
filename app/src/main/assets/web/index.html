@@ -27,6 +27,9 @@
     </section>
 
     <div id="controlSection" hidden>
+        <nav class="section-nav" aria-label="Разделы пульта">
+            <a href="#queueSection">Моя программа</a><a href="#addYoutubeSection">YouTube</a><a href="#localSection">Свои видео / USB</a><a href="#downloadsSection">Загрузки</a>
+        </nav>
         <section class="card" aria-labelledby="homeConnectHeading">
             <h2 id="homeConnectHeading">Пульт для всей семьи</h2>
             <p>Для другого телефона: откройте QR-код в родительском меню на ТВ, введите PIN один раз и сохраните страницу в избранное или на главный экран.</p>
@@ -51,10 +54,10 @@
             </div>
         </section>
 
-        <section class="card" aria-labelledby="preparedHeading">
-            <h2 id="preparedHeading">Подготовленная программа</h2>
-            <p class="muted">Заранее скачайте выбранную очередь. В этом режиме показываются только полностью готовые файлы; следующие загружаются во время просмотра. Включение не запускает и не останавливает текущий ролик, режим применяется при следующем запуске.</p>
-            <p class="muted">Лимит 10 ГиБ, резерв свободного места 1 ГиБ. Если следующий ролик не готов, придётся подождать. После перезапуска незавершённая загрузка начинается заново.</p>
+        <section id="downloadsSection" class="card" aria-labelledby="preparedHeading">
+            <h2 id="preparedHeading">Загрузки YouTube</h2>
+            <p class="muted">Заранее скачайте YouTube-ролики из вашей программы. Свои видео уже доступны офлайн. В этом режиме показываются только полностью готовые файлы; следующие загружаются во время просмотра. Включение не запускает и не останавливает текущий ролик, режим применяется при следующем запуске.</p>
+            <p class="muted">Лимит 10 ГиБ, резерв свободного места 1 ГиБ. Если следующий ролик не готов, придётся подождать. При обрыве сеть будет проверена автоматически. Часть файла сохраняется; докачка зависит от ответа сервера.</p>
             <p id="preparedSummary" role="status">Нет данных</p>
             <p id="preparedStorage" class="muted"></p>
             <div class="actions">
@@ -78,7 +81,7 @@
         </section>
 
         <section class="card">
-            <h2>Добавить в конец очереди</h2>
+            <h2 id="addYoutubeSection">Добавить YouTube-видео</h2>
             <p class="muted">По одной ссылке на строку. Добавление не запускает воспроизведение.</p>
             <textarea id="links" rows="4" placeholder="https://www.youtube.com/watch?v=…&#10;https://youtu.be/…"></textarea>
             <button id="addButton">Добавить</button>
@@ -88,12 +91,42 @@
 
         <section class="card">
             <div class="row">
-                <h2>Очередь</h2>
+                <h2 id="queueSection">Моя программа</h2>
                 <button id="clearAllButton" class="danger">Очистить всю очередь</button>
                 <button id="clearPendingButton" class="secondary">Удалить только ожидающие</button>
             </div>
             <p class="muted">Полная очистка останавливает ролик и удаляет текущий, ожидающие и историю очереди. Скачанные файлы и сохранённые подборки остаются.</p>
+            <p class="muted">Порядок меняется только у ожидающих роликов. Текущий ролик продолжает работать.</p>
+            <button id="editQueueOrder" class="secondary">Изменить порядок</button>
+            <div id="queueOrderTools" class="sort-tools" hidden>
+                <label>Быстрая сортировка <select id="queueSortMode"><option value="title">По названию А–Я</option><option value="title-desc">По названию Я–А</option><option value="ready">Сначала готовые офлайн</option><option value="reverse">Обратный порядок</option></select></label>
+                <button id="queueSortButton" class="secondary">Отсортировать список</button>
+                <p class="muted">Перетаскивайте мышью или используйте стрелки и номер позиции. Пока не нажата кнопка «Сохранить порядок», очередь не меняется.</p>
+                <button id="queueOrderApply">Сохранить порядок</button><button id="queueOrderCancel" class="secondary">Отменить</button>
+            </div>
+            <p id="queueOrderMessage" class="message" role="status"></p>
             <div id="queue"></div>
+        </section>
+
+        <section id="localSection" class="card" aria-labelledby="localHeading">
+            <h2 id="localHeading">Свои видео — без интернета</h2>
+            <p>Скопируйте видео с телефона, компьютера или флешки. После проверки оно останется на приставке. Импорт не добавляет ролик в программу и не запускает просмотр.</p>
+            <details><summary>С телефона / компьютера / подключённой к нему флешки</summary>
+                <label>Выберите видео <input id="localFilesInput" type="file" accept="video/*,.mkv,.webm,.mp4,.m4v,.mov,.3gp" multiple></label>
+                <button id="uploadLocalButton">Скопировать на приставку</button><button id="cancelUploadButton" class="secondary" hidden>Отменить передачу</button>
+                <progress id="localUploadProgress" max="100" value="0" hidden></progress><p id="localUploadMessage" class="message" role="status" aria-live="polite"></p>
+            </details>
+            <details><summary>Флешка, вставленная в приставку</summary>
+                <p>Вставьте флешку в ТВ-приставку. Один раз в родительском меню на ТВ нажмите «Выбрать папку USB / локальных видео» и разрешите чтение нужной папки. Затем выберите файлы здесь.</p>
+                <button id="usbRefreshButton" class="secondary">Открыть USB-папку</button><button id="usbBackButton" class="secondary" hidden>Назад</button>
+                <p id="usbMessage" class="message" role="status"></p><div id="usbFiles"></div>
+                <button id="usbImportButton" disabled>Скопировать выбранные на приставку</button>
+            </details>
+            <p class="muted">Общий лимит с YouTube — 10 ГиБ; свободный резерв — 1 ГиБ. Поддерживаются MP4/MKV/WebM/3GP с кодеками приставки, без DRM. Исходные файлы не изменяются.</p>
+            <div id="localImportJobs"></div>
+            <div class="row"><h3>Уже на приставке</h3><button id="localRefreshButton" class="secondary">Обновить</button></div>
+            <div class="controls"><button id="localSelectAll" class="secondary">Выбрать все</button><button id="localSelectNone" class="secondary">Снять выбор</button><button id="localAddSelected" disabled>Добавить выбранные в программу</button></div>
+            <p id="localMessage" class="message" role="status"></p><div id="localLibrary"></div>
         </section>
 
         <section class="card" aria-labelledby="playlistHeading">
@@ -141,5 +174,6 @@
     </div>
 </main>
 <script src="/app.js"></script>
+<script src="/media.js"></script>
 </body>
 </html>
