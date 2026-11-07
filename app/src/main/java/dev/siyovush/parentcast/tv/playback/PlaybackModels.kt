@@ -13,11 +13,14 @@ enum class PlaybackErrorKind {
     PLAYBACK,
 }
 
+enum class OnlineRecovery { NONE, NETWORK, CONTAINER }
+
 data class PlaybackFailure(
     val kind: PlaybackErrorKind,
     val canRefresh: Boolean = false,
     val diagnostic: String = "",
     val stopRequested: Boolean = false,
+    val onlineRecovery: OnlineRecovery = OnlineRecovery.NONE,
 )
 
 enum class PlaybackStatus {

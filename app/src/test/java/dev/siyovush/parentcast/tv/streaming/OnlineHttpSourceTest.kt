@@ -65,4 +65,19 @@ class OnlineHttpSourceTest {
         assertFalse(OnlineHttpSource.allowed(vk.copy(provider=MediaProvider.YOUTUBE),"https://a.okcdn.ru/x".toHttpUrl()))
         assertTrue(OnlineHttpSource.allowed(vk.copy(provider=MediaProvider.YOUTUBE),"https://rr1.googlevideo.com/x".toHttpUrl()))
     }
+    @Test fun interruptedBodyResumesAtDeliveredByteWithoutDuplicatingOrSkippingData()=MockWebServer().use {server->
+        server.start();val expected=ByteArray(131072){(it%251).toByte()}
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(expected)).setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY))
+        val s=source(server);val delivered=java.io.ByteArrayOutputStream();val buffer=ByteArray(1024)
+        s.open(data())
+        val failure=assertThrows(RangeFailure::class.java){while(true){val n=s.read(buffer,0,buffer.size);if(n<0)error("Expected disconnect");delivered.write(buffer,0,n)}}
+        assertEquals("NETWORK_RETRY",failure.reason);s.close();server.takeRequest()
+        val offset=delivered.size();assertTrue(offset in 1 until expected.size)
+        server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Range","bytes $offset-${expected.lastIndex}/${expected.size}")
+            .setBody(okio.Buffer().write(expected,offset,expected.size-offset)))
+        s.open(data(offset.toLong()))
+        while(true){val n=s.read(buffer,0,buffer.size);if(n<0)break;delivered.write(buffer,0,n)}
+        s.close();assertArrayEquals(expected,delivered.toByteArray());assertEquals("bytes=$offset-",server.takeRequest().getHeader("Range"))
+    }
+
 }

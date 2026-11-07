@@ -1,6 +1,12 @@
 # План реализации
 
-Текущая задача: `tasks/Online-playback.md` — прямой онлайн-просмотр без записи
+Текущая задача: `tasks/Online-recovery.md` — восстановление выбранного онлайн-видео
+после сбоя, реализовано.405unit/lint/debug/release/2web suites PASS. H728: два
+контролируемых отказа → автоматическое продолжение, STOP отменяет повтор, данные
+сохранены; исходныйPLAY восстановлен. Причина естественного MP4сбоя UNKNOWN.
+Результаты: `docs/reports/Online-recovery.md`; Draft PR без Merge.
+
+Предыдущее задание: `tasks/Online-playback.md` — прямой онлайн-просмотр без записи
 на microSD, реализован.397unit/lint/debug/release/web PASS; H728 VK480p — PASS
 в122s наблюдения без повторной буферизации. Старт/seek имеют задержки; YouTube
 preview PREVIEW_TIMEOUT, онлайнNOT_RUN. Данные сохранены, STOP.
