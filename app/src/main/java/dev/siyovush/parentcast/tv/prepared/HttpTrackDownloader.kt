@@ -14,11 +14,15 @@ internal class HttpTrackDownloader(
     private val session: YouTubeSession,
     private val budget: MediaBudget? = null,
     private val transferEvent: (String,Long) -> Unit = { _,_-> },
+    vkTransport: OkHttpClient? = null,
     private val allowed: (HttpUrl) -> Boolean = { it.scheme == "https" && it.port == 443 && it.username.isEmpty() && it.password.isEmpty() && it.host.endsWith(".googlevideo.com") && it.host.length > ".googlevideo.com".length },
 ) : TrackDownloader {
     private val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).callTimeout(2, TimeUnit.HOURS).build()
+    private val vkClient = vkTransport ?: client.newBuilder().dns(dev.siyovush.parentcast.tv.media.VkMediaPolicy.dns).build()
     override suspend fun download(spec: StreamSpec, target: File, allowance: Long, progress: (Long, Long) -> Unit): LocalTrack = coroutineScope {
+        val isVk = spec.provider == dev.siyovush.parentcast.tv.media.MediaProvider.VK
+        val transferClient = if (isVk) vkClient else client
         val transferContext=currentCoroutineContext()
         var url = spec.url.toHttpUrl()
         val files = ResumeFiles(target)
@@ -36,13 +40,13 @@ internal class HttpTrackDownloader(
         var offset = if (saved != null && saved.validator.isNotEmpty()) files.partial.length() else 0L
         if (offset <= 0 || offset > (saved?.total ?: 0)) { files.reset(); saved = null; offset = 0 }
         repeat(8) {
-            require(allowed(url)) { "UNSUPPORTED" }
+            require(if (isVk) dev.siyovush.parentcast.tv.media.VkMediaPolicy.allows(url) else allowed(url)) { "UNSUPPORTED" }
             currentCoroutineContext().ensureActive()
-            val builder = Request.Builder().url(url).header("User-Agent", YOUTUBE_USER_AGENT).header("Accept-Encoding", "identity")
+            val builder = Request.Builder().url(url).header("User-Agent", if(isVk) spec.headers.entries.firstOrNull { it.key.equals("User-Agent",true) }?.value ?: YOUTUBE_USER_AGENT else YOUTUBE_USER_AGENT).header("Accept-Encoding", "identity")
             spec.headers.filterKeys { it.lowercase() in setOf("accept", "accept-language", "origin", "referer") }.forEach { (k, v) -> builder.header(k, v) }
-            CookieHeaderCodec.merge(emptyList(), session.cookiesFor(url))?.let { builder.header("Cookie", it) }
+            (if (isVk) null else CookieHeaderCodec.merge(emptyList(), session.cookiesFor(url)))?.let { builder.header("Cookie", it) }
             if (offset > 0 && saved != null) { builder.header("Range", "bytes=$offset-"); builder.header("If-Range", saved!!.validator) }
-            val call = client.newCall(builder.build())
+            val call = transferClient.newCall(builder.build())
             val cancellation = launch(start = CoroutineStart.UNDISPATCHED) { try { awaitCancellation() } finally { call.cancel() } }
             try {
                 val result = withContext(Dispatchers.IO) {

@@ -139,6 +139,20 @@ class PlaylistBatchTest {
         c.close()
     }
 
+    @Test fun mixedProvidersPersistDeduplicateAndReplayWithoutPlayback() = runTest {
+        val store=BatchStore();val player=BatchPlayer();val c=coordinator(store,player)
+        val ids=listOf("video000001","vk:-227392256_456239129","vk:-227392256_456239129")
+        assertEquals(BatchAddResult.APPLIED,c.addBatch(ids,0,"vk-command","fingerprint"))
+        assertEquals(QueueAddition(2,1),c.additionSummary("vk-command"))
+        store.state=QueueSnapshotCodec.decode(QueueSnapshotCodec.encode(store.state))
+        val restored=coordinator(store,player)
+        assertEquals(BatchAddResult.REPLAY,restored.addBatch(ids,0,"vk-command","fingerprint"))
+        assertEquals(BatchAddResult.APPLIED,restored.addBatch(ids,1,"vk-command-2"))
+        assertEquals(QueueAddition(0,3),restored.additionSummary("vk-command-2"))
+        assertEquals(1L,store.state.version);assertEquals(ids.take(2),store.state.items.map { it.videoId })
+        assertEquals(0,player.calls);c.close();restored.close()
+    }
+
     private fun TestScope.coordinator(store: BatchStore, player: BatchPlayer) = PlaybackCoordinator(
         object : YouTubeSource {
             override suspend fun resolve(videoId: String) = ResolvedVideo(videoId, "Test", 10,

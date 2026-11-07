@@ -228,12 +228,13 @@ internal class PreparedLibrary(
         if (old.isNotEmpty()) { update { it.copy(entries = it.entries - old) }; persist() }
         return old.size
     }
-    suspend fun localOrWait(id: String, own: Boolean = false): ResolvedVideo? {
+    suspend fun localOrWait(id: String, own: Boolean = false, preparedOnly: Boolean = false): ResolvedVideo? {
         while (true) {
             val version = revision.value
             val s = snapshot()
-            if (!s.enabled && !own) return null
+            if (!s.enabled && !own && !preparedOnly) return null
             val e = s.entries[id]
+            if (preparedOnly && !s.enabled && e?.status != PreparationStatus.READY) throw failure("PREPARATION_REQUIRED")
             if (own && e?.local != true) throw failure("LOCAL_FILE_NOT_FOUND")
             if (id in s.deleting) throw failure("FILE_DELETED")
             if (e?.status == PreparationStatus.READY) {
@@ -296,7 +297,7 @@ internal class PreparedLibrary(
     private fun failure(code: String) = YouTubeSourceException(PlaybackFailure(PlaybackErrorKind.UNAVAILABLE, diagnostic = code))
 }
 internal class PreparedYouTubeSource(private val library: PreparedLibrary, private val streaming: YouTubeSource) : YouTubeSource {
-    override suspend fun resolve(videoId: String): ResolvedVideo = library.localOrWait(videoId) ?: streaming.resolve(videoId)
+    override suspend fun resolve(videoId: String): ResolvedVideo = library.localOrWait(videoId, preparedOnly = dev.siyovush.parentcast.tv.media.OnlineMediaIds.isVk(videoId)) ?: streaming.resolve(videoId)
 }
 
 internal data class LocalMediaInfo(val durationSeconds: Long, val mime: String)

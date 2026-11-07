@@ -409,6 +409,15 @@ class PlaybackCoordinatorTest {
         c.close()
     }
 
+    @Test fun vkDoesNotRequireYoutubeSessionAndNextYoutubeStillDoes() = runTest {
+        val source=FakeSource();val player=FakePlayer();val c=coordinator(source,MemoryStore(),player,authorizationGate={false})
+        c.start();c.add("vk:-227392256_456239129");c.add("video000001");c.play();advanceUntilIdle()
+        assertEquals("vk:-227392256_456239129",player.prepareCalls.single().videoId)
+        c.next();advanceUntilIdle()
+        assertEquals(PlaybackStatus.WAITING_FOR_SESSION,c.currentSnapshot().status)
+        assertEquals(1,player.prepareCalls.size);c.close()
+    }
+
     private fun TestScope.coordinator(
         source: FakeSource,
         store: MemoryStore,

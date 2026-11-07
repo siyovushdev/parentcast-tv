@@ -19,6 +19,7 @@ data class PlaylistResult(
     val status: PlaylistStatus,
     val reason: String?,
     val reportedCount: Int?,
+    val provider: dev.siyovush.parentcast.tv.media.MediaProvider = dev.siyovush.parentcast.tv.media.MediaProvider.YOUTUBE,
 )
 
 fun interface PlaylistSource {

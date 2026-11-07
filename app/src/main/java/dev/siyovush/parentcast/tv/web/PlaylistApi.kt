@@ -112,7 +112,7 @@ internal class PlaylistApi(
 
     private fun previewJson(preview: PlaylistPreview): JSONObject {
         val result = preview.result
-        return JSONObject().put("previewId", preview.id)
+        return JSONObject().put("previewId", preview.id).put("provider", result?.provider?.name ?: JSONObject.NULL)
             .put("status", when (preview.state) {
                 PreviewState.LOADING -> "LOADING"
                 PreviewState.CANCELLED -> "CANCELLED"

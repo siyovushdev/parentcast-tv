@@ -23,7 +23,7 @@ data class SavedCollection(
             "Invalid collection name"
         }
         require(videoIds.size in 1..500) { "A collection must contain 1..500 videos" }
-        require(videoIds.all { Regex("[A-Za-z0-9_-]{11}").matches(it) }) { "Invalid video ID" }
+        require(videoIds.all(dev.siyovush.parentcast.tv.media.OnlineMediaIds::isOnline)) { "Invalid video ID" }
         require(createdAtMs >= 0) { "Invalid creation time" }
         require(creationFingerprint == null || Regex("[0-9a-f]{64}").matches(creationFingerprint)) {
             "Invalid creation fingerprint"

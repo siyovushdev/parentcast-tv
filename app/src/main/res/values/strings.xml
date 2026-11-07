@@ -11,7 +11,7 @@
     <string name="player_error">Видео недоступно. Подробности — на родительском debug-экране.</string>
     <string name="debug_title">ParentCast TV — настройки родителя M3</string>
     <string name="debug_warning">Прототип для родителя. Это не защищённый детский режим.</string>
-    <string name="debug_link_hint">https://www.youtube.com/watch?v=… или https://youtu.be/…</string>
+    <string name="debug_link_hint">https://youtu.be/… или https://vkvideo.ru/video…</string>
     <string name="debug_add">Добавить в конец</string>
     <string name="debug_play">Играть</string>
     <string name="debug_pause">Пауза / продолжить</string>
@@ -22,7 +22,7 @@
     <string name="debug_queue">Очередь</string>
     <string name="debug_empty">Очередь пуста</string>
     <string name="debug_delete">Удалить ожидающий %1$d: %2$s</string>
-    <string name="debug_invalid_link">Неверная или неподдерживаемая YouTube-ссылка</string>
+    <string name="debug_invalid_link">Неверная или неподдерживаемая ссылка YouTube/VK</string>
     <string name="debug_added">Добавлено: %1$s</string>
     <string name="debug_storage_warning">Сохранённое состояние не прочитано; используется пустая очередь.</string>
     <string name="debug_session_disabled">YouTube DEBUG session: выключена</string>

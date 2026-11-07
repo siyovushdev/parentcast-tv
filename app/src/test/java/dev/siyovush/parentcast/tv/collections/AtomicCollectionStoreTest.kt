@@ -60,6 +60,13 @@ class AtomicCollectionStoreTest {
         assertEquals(listOf(selection("collection-2")), store.list())
     }
 
+    @Test fun mixedVkAndYoutubeSelectionIsFixedAndOrdered() {
+        val ids=mutableListOf("vk:-227392256_456239129","video000001")
+        val store=AtomicCollectionStore(file());store.save(selection(ids=ids))
+        ids.reverse();ids.add("vk:-1_2")
+        assertEquals(listOf("vk:-227392256_456239129","video000001"),AtomicCollectionStore(file()).get("collection-1")!!.videoIds)
+    }
+
     @Test
     fun missingStorageStartsEmpty() {
         assertEquals(emptyList<SavedCollection>(), AtomicCollectionStore(file()).list())

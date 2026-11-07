@@ -109,14 +109,14 @@ for (const [code, expected] of [
 
 vm.runInContext("preview = null; byId('playlistUrl').value = 'https://www.youtube.com/playlist?list=PLfixture'", context);
 for (const [status, code, expected] of [
-    [400, "BAD_REQUEST", "публичный статический YouTube-плейлист"],
+    [400, "BAD_REQUEST", "публичный статический плейлист YouTube/VK"],
     [429, "PREVIEW_BUSY", "Приставка уже получает несколько списков"],
 ]) {
     nextFailure = {path: "/api/playlists/preview", status, code};
     await assert.rejects(vm.runInContext("startPreview()", context));
     const message = elements.get("playlistMessage").textContent;
     assert(message.includes(expected), `Incorrect preview message for ${status}/${code}`);
-    assert.equal(message.includes("публичный статический YouTube-плейлист"), status === 400, "Resource exhaustion must not be described as an invalid link");
+    assert.equal(message.includes("публичный статический плейлист YouTube/VK"), status === 400, "Resource exhaustion must not be described as an invalid link");
 }
 
 vm.runInContext("preview = {previewId:'fixture',status:'COMPLETE',entries:[]}; selectedIndices = new Set([1]); byId('collectionName').value = 'Fixture'", context);
@@ -159,3 +159,11 @@ assert.equal(requests.filter(r=>r.path==="/api/queue/add").length,start+1);
 releaseHeld(); await Promise.all([adding,addingAgain]);
 assert(elements.get("commandMessage").textContent.includes("уже есть в очереди"));
 console.log("PASS: repeated playlist/link clicks, busy controls, queued selection and accurate added/skipped messages (synthetic)");
+
+vm.runInContext("preview={previewId:'vk',provider:'VK',status:'COMPLETE',reportedCount:61,title:'VK',entries:[{index:1,videoId:'vk:-227392256_456239129',title:'<script>title</script>',durationSeconds:116,availability:'UNKNOWN',selectable:true}]}; selectedIndices=new Set([1]); state.items=[]; renderPreview()",context);
+assert(elements.get('playlistCount').textContent.includes('заявлено VK: 61'));
+assert(elements.get('playlistSelectedCount').textContent.includes('новых: 1'));
+vm.runInContext("state.items=[{videoId:'vk:-227392256_456239129'}];updateSelectionControls()",context);
+assert.equal(elements.get('playlistApplyButton').textContent,'Уже в очереди');
+assert.equal(elements.get('playlistApplyButton').disabled,true);
+console.log('PASS: VK preview count, provider namespace and dedup controls (synthetic)');

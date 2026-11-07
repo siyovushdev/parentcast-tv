@@ -23,7 +23,7 @@ internal object PreparedRuntime {
             val store = PreparedStore(File(app.noBackupFilesDir, "prepared-programme"))
             val budget = MediaBudget(store.directory)
             PreparedLibrary(store,
-                YtDlpYouTubeSource(app, session, publicOnly = true), HttpTrackDownloader(session, budget, transferEvent={event,offset -> android.util.Log.i("ParentCastTransfer","$event offset=$offset")}),
+                dev.siyovush.parentcast.tv.media.OnlineVideoSource(YtDlpYouTubeSource(app, session, publicOnly = true), dev.siyovush.parentcast.tv.media.VkVideoSource(app)), HttpTrackDownloader(session, budget, transferEvent={event,offset -> android.util.Log.i("ParentCastTransfer","$event offset=$offset")}),
                 CoroutineScope(SupervisorJob() + Dispatchers.IO), ::validate,
                 wakeService = { android.os.Handler(app.mainLooper).post {
                     try { app.startForegroundService(Intent(app, PreparationService::class.java)) }
