@@ -153,6 +153,50 @@ class PlaylistBatchTest {
         assertEquals(0,player.calls);c.close();restored.close()
     }
 
+    @Test fun groupsShareUniqueQueueItemsButPreserveTheirTitlesOrderAndReceipts() = runTest {
+        val store=BatchStore();val player=BatchPlayer();val c=coordinator(store,player)
+        val first=QueueGroup.fixed("first","<script>Первый</script>",listOf("video000002","video000001"),QueueGroupSource.YOUTUBE_PLAYLIST)
+        assertEquals(BatchAddResult.APPLIED,c.addBatch(first.videoIds,0,"group-cmd-1",group=first,titles=mapOf("video000002" to "Second")))
+        val second=QueueGroup.fixed("second","Второй",listOf("video000001","video000002"),QueueGroupSource.COLLECTION)
+        assertEquals(BatchAddResult.APPLIED,c.addBatch(second.videoIds,1,"group-cmd-2",group=second))
+        assertEquals(2,store.state.items.size);assertEquals(2,store.state.groups.size)
+        assertEquals(QueueAddition(0,2,second.id),c.additionSummary("group-cmd-2"))
+        assertEquals("Second",store.state.items[0].title)
+        assertEquals(BatchAddResult.APPLIED,c.addBatch(second.videoIds,2,"group-cmd-3",group=second))
+        assertEquals(2L,store.state.version)
+        val restored=coordinator(BatchStore(QueueSnapshotCodec.decode(QueueSnapshotCodec.encode(store.state))),player)
+        assertEquals(BatchAddResult.REPLAY,restored.addBatch(second.videoIds,1,"group-cmd-2",group=second))
+        assertEquals(0,player.calls);c.close();restored.close()
+    }
+
+    @Test fun groupOrderChangesDoNotTouchPlaybackAndRejectStaleOrIncompleteLists() = runTest {
+        val store=BatchStore();val player=BatchPlayer();val c=coordinator(store,player)
+        val group=QueueGroup.fixed("source","Уроки",listOf("video000001","video000002"),QueueGroupSource.YOUTUBE_PLAYLIST)
+        c.addBatch(group.videoIds,0,"group-add",group=group)
+        val before=c.currentSnapshot()
+        assertEquals(BatchAddResult.APPLIED,c.reorderGroups(group.videoIds.reversed(),group.id,1,"group-sort","fingerprint"))
+        assertEquals(before.queueState.currentItem,c.currentSnapshot().queueState.currentItem)
+        assertEquals(before.generation,c.currentSnapshot().generation);assertEquals(0,player.calls)
+        assertEquals(BatchAddResult.REPLAY,c.reorderGroups(group.videoIds.reversed(),group.id,1,"group-sort","fingerprint"))
+        assertEquals(BatchAddResult.CONFLICT,c.reorderGroups(group.videoIds,group.id,1,"group-stale","other"))
+        assertThrows(IllegalArgumentException::class.java) { c.reorderGroups(group.videoIds.take(1),group.id,2,"group-invalid","other") }
+        store.fail=true
+        assertEquals(BatchAddResult.STORAGE_ERROR,c.reorderGroups(group.videoIds,group.id,2,"group-fail","other"))
+        assertEquals(group.videoIds.reversed(),store.state.groups.single().videoIds);c.close()
+    }
+
+    @Test fun removingPlaylistKeepsSharedVideosAndIsAtomicIdempotent() = runTest {
+        val store=BatchStore();val player=BatchPlayer();val c=coordinator(store,player)
+        val first=QueueGroup.fixed("one","Первый",listOf("video000001","video000002"),QueueGroupSource.YOUTUBE_PLAYLIST)
+        val second=QueueGroup.fixed("two","Второй",listOf("video000002","video000003"),QueueGroupSource.COLLECTION)
+        c.addBatch(first.videoIds,0,"remove-add1",group=first);c.addBatch(second.videoIds,1,"remove-add2",group=second)
+        store.fail=true;assertEquals(BatchAddResult.STORAGE_ERROR,c.removeGroup(first.id,2,"remove-fail","fp"))
+        assertEquals(3,store.state.items.size);assertEquals(2,store.state.groups.size);assertEquals(0,player.calls)
+        store.fail=false;assertEquals(BatchAddResult.APPLIED,c.removeGroup(first.id,2,"remove-ok","fp"))
+        assertEquals(listOf("video000002","video000003"),store.state.items.map {it.videoId})
+        assertEquals(listOf(second),store.state.groups);assertEquals(BatchAddResult.REPLAY,c.removeGroup(first.id,2,"remove-ok","fp"));c.close()
+    }
+
     private fun TestScope.coordinator(store: BatchStore, player: BatchPlayer) = PlaybackCoordinator(
         object : YouTubeSource {
             override suspend fun resolve(videoId: String) = ResolvedVideo(videoId, "Test", 10,

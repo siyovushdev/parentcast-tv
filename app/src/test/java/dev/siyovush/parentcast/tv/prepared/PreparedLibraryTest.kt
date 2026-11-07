@@ -112,6 +112,32 @@ class PreparedLibraryTest {
         assertEquals("", library.snapshot().entries[first]!!.error)
     }
 
+    @Test fun playingPlaylistKeepsItsNextVideosAheadOfAnotherPreparationTarget() = runBlocking {
+        val storage=store();val source=object:YouTubeSource {override suspend fun resolve(videoId:String)=video(videoId)}
+        val library=PreparedLibrary(storage,source,downloader(),this,{_,_,_->})
+        val group=dev.siyovush.parentcast.tv.queue.QueueGroup.fixed("playing","Смотрим",listOf(first,second),dev.siyovush.parentcast.tv.queue.QueueGroupSource.YOUTUBE_PLAYLIST)
+        val other=dev.siyovush.parentcast.tv.queue.QueueGroup.fixed("other","Потом",listOf("video000003"),dev.siyovush.parentcast.tv.queue.QueueGroupSource.YOUTUBE_PLAYLIST)
+        val q=dev.siyovush.parentcast.tv.queue.QueueState(items=listOf(first,second,"video000003").map {dev.siyovush.parentcast.tv.queue.QueueItem(it,it)},currentIndex=0,
+            intent=dev.siyovush.parentcast.tv.queue.PlaybackIntent.PLAY,groups=listOf(group,other),activeGroupId=group.id)
+        library.configure(true,other.videoIds,other.id);library.syncQueue(q)
+        assertEquals(listOf(first,second,"video000003"),library.snapshot().plan)
+        library.syncQueue(q.copy(intent=dev.siyovush.parentcast.tv.queue.PlaybackIntent.PAUSE))
+        assertEquals(other.videoIds,library.snapshot().plan)
+    }
+
+    @Test fun choosingEarlierUnpreparedVideoPreemptsLaterTransferWithoutDeletingItsPartial() = runBlocking {
+        val entered=CompletableDeferred<Unit>();val storage=store();val order=mutableListOf<String>();var block=true
+        val library=PreparedLibrary(storage,object:YouTubeSource {override suspend fun resolve(videoId:String)=video(videoId).also {order+=videoId}},
+            TrackDownloader { spec,target,allowance,progress ->
+                if(block) {File(target.path+".part").writeText("partial");entered.complete(Unit);awaitCancellation()}
+                downloader().download(spec,target,allowance,progress)
+            },this,{_,_,_->})
+        library.configure(true,listOf(second));val old=launch {library.runWorker()};entered.await()
+        library.schedule(listOf(first,second));old.join();assertTrue(File(storage.track(second).path+".part").exists())
+        block=false;library.runWorker();assertEquals(listOf(second,first,second),order)
+        assertTrue(library.snapshot().entries.values.all {it.status==PreparationStatus.READY})
+    }
+
     @Test fun removingActiveVideoCancelsItBeforePreparingNext() = runBlocking {
         val entered = CompletableDeferred<Unit>(); val storage = store()
         val library = PreparedLibrary(storage, object : YouTubeSource { override suspend fun resolve(videoId: String) = video(videoId) },

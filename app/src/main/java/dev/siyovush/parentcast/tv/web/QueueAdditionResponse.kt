@@ -5,7 +5,7 @@ import dev.siyovush.parentcast.tv.queue.QueueAddition
 import org.json.JSONObject
 
 internal fun additionJson(value: QueueAddition?) = value?.let {
-    JSONObject().put("added", it.added).put("skipped", it.skipped)
+    JSONObject().put("added", it.added).put("skipped", it.skipped).apply { it.groupId?.let { id -> put("groupId",id) } }
 }
 
 internal fun queueAdditionResponse(result: BatchAddResult, addition: QueueAddition?, stateBody: String): ApiResponse = when (result) {

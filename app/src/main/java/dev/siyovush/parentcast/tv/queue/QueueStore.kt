@@ -15,7 +15,7 @@ interface QueueStore {
 }
 
 object QueueSnapshotCodec {
-    private const val VERSION = 2
+    private const val VERSION = 3
 
     fun encode(state: QueueState): String {
         val items = JSONArray()
@@ -23,12 +23,14 @@ object QueueSnapshotCodec {
             items.put(
                 JSONObject()
                     .put("queueItemId", item.queueItemId)
-                    .put("videoId", item.videoId).put("local", item.local),
+                    .put("videoId", item.videoId).put("local", item.local).put("title", item.title),
             )
         }
         return JSONObject()
             .put("version", VERSION)
             .put("items", items)
+            .put("groups", JSONArray().apply { state.groups.forEach { g -> put(JSONObject().put("id",g.id).put("name",g.name).put("videoIds",JSONArray(g.videoIds)).put("source",g.source.name)) } })
+            .put("activeGroupId", state.activeGroupId ?: JSONObject.NULL)
             .put("currentIndex", state.currentIndex)
             .put("positionMs", state.positionMs)
             .put("intent", state.intent.name)
@@ -38,7 +40,7 @@ object QueueSnapshotCodec {
                 state.batchReceipts.forEach { receipt ->
                     put(JSONObject().put("key", receipt.key).put("fingerprint", receipt.fingerprint)
                         .put("createdAtMs", receipt.createdAtMs).apply {
-                            receipt.addition?.let { put("addition", JSONObject().put("added", it.added).put("skipped", it.skipped)) }
+                            receipt.addition?.let { put("addition", JSONObject().put("added", it.added).put("skipped", it.skipped).put("groupId", it.groupId ?: JSONObject.NULL)) }
                         })
                 }
             })
@@ -59,12 +61,16 @@ object QueueSnapshotCodec {
                         queueItemId = item.getString("queueItemId"),
                         videoId = item.getString("videoId"),
                         local = item.optBoolean("local", false),
+                        title = item.optString("title", ""),
                     ),
                 )
             }
         }
         return QueueState(
             items = items,
+            groups = root.optJSONArray("groups")?.let { a -> List(a.length()) { n -> val g=a.getJSONObject(n);val ids=g.getJSONArray("videoIds")
+                QueueGroup(g.getString("id"),g.getString("name"),List(ids.length()) { ids.getString(it) },QueueGroupSource.valueOf(g.getString("source"))) } }.orEmpty(),
+            activeGroupId = root.optString("activeGroupId").takeUnless { it.isBlank() || it == "null" },
             currentIndex = root.getInt("currentIndex"),
             positionMs = root.getLong("positionMs"),
             intent = PlaybackIntent.valueOf(root.getString("intent")),
@@ -74,7 +80,7 @@ object QueueSnapshotCodec {
                 List(receipts.length()) { index ->
                     val receipt = receipts.getJSONObject(index)
                     BatchReceipt(receipt.getString("key"), receipt.getString("fingerprint"), receipt.getLong("createdAtMs"),
-                        receipt.optJSONObject("addition")?.let { QueueAddition(it.getInt("added"), it.getInt("skipped")) })
+                        receipt.optJSONObject("addition")?.let { QueueAddition(it.getInt("added"), it.getInt("skipped"), it.optString("groupId").takeUnless { v -> v.isBlank() || v=="null" }) })
                 }
             } ?: emptyList(),
         )

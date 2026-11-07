@@ -37,7 +37,7 @@ class LocalVideoApiTest {
         val local=LocalVideoApi(library,coordinator,dispatcher,jobs,scope,validator,usb)
         val tokens=AtomicTokenStore(File(root,"tokens.json"));val issued=tokens.create("synthetic")
         val pin=object:PinSettings{override fun hasPin()=true;override fun pinRecord()="";override fun savePinRecord(record:String)=Unit}
-        val controller=ApiController(PairingManager(pin,tokens),tokens,AtomicIdempotencyStore(File(root,"commands.json")),coordinator,dispatcher,RequestSecurity(setOf("127.0.0.1"),8765),{""},localMedia=local,mediaTitle=library::mediaTitle)
+        val controller=ApiController(PairingManager(pin,tokens),tokens,AtomicIdempotencyStore(File(root,"commands.json")),coordinator,dispatcher,RequestSecurity(setOf("127.0.0.1"),8765),{""},localMedia=local,prepared=PreparedApi(library,coordinator,dispatcher),mediaTitle=library::mediaTitle)
         val headers=mapOf("host" to "127.0.0.1:8765","origin" to "http://127.0.0.1:8765","referer" to "http://127.0.0.1:8765/","x-parentcast-client" to "m1","authorization" to "Bearer ${issued.second}")
         init {coordinator.start();fixtures+=this}
         fun post(path:String,j:JSONObject):ApiResponse {if(!j.has("idempotencyKey"))j.put("idempotencyKey",UUID.randomUUID().toString());return controller.handle(ApiRequest("POST",path,headers,j.toString(),"fixture"))}
@@ -150,11 +150,24 @@ class LocalVideoApiTest {
             assertEquals(1,f.library.localEntries().size)
         } finally {server.stop()}
     }
+    @Test fun unreadyWatchIsRejectedAndPlaylistPreparationDoesNotChangePlayback() = runBlocking {
+        val f=Fixture();val ids=listOf("video000001","video000002")
+        val group=QueueGroup.fixed("test","Уроки",ids,QueueGroupSource.YOUTUBE_PLAYLIST)
+        f.coordinator.addBatch(ids,0,"group-start",group=group,titles=mapOf(ids[0] to "Название"))
+        val before=f.coordinator.currentSnapshot().queueState
+        val prepared=f.post("/api/prepared",JSONObject().put("action","ENABLE").put("groupId",group.id).put("queueVersion",before.version))
+        assertEquals(200,prepared.code);assertEquals(before,f.coordinator.currentSnapshot().queueState)
+        assertEquals(ids,f.library.snapshot().plan);assertEquals(group.id,f.store.read().targetGroupId)
+        val denied=f.post("/api/queue/select",JSONObject().put("queueItemId",before.items[0].queueItemId).put("groupId",group.id).put("queueVersion",before.version).put("play",true))
+        assertEquals(409,denied.code);assertEquals("VIDEO_NOT_READY",JSONObject(denied.body).getString("error"))
+        assertEquals(before,f.coordinator.currentSnapshot().queueState);assertEquals(0,f.prepares)
+    }
+
     @Test fun legacyQueueMigratesAndLocalDiscriminatorCannotBeLostOnRollback() {
         val original=QueueState.Empty.add(QueueItem("one","video000001"))
         val legacy=JSONObject(QueueSnapshotCodec.encode(original)).put("version",1);legacy.getJSONArray("items").getJSONObject(0).remove("local")
         assertFalse(QueueSnapshotCodec.decode(legacy.toString()).currentItem!!.local)
         val local=original.copy(items=listOf(QueueItem("local","local_"+"a".repeat(32),true)))
-        val encoded=QueueSnapshotCodec.encode(local);assertEquals(2,JSONObject(encoded).getInt("version"));assertTrue(QueueSnapshotCodec.decode(encoded).currentItem!!.local)
+        val encoded=QueueSnapshotCodec.encode(local);assertEquals(3,JSONObject(encoded).getInt("version"));assertTrue(QueueSnapshotCodec.decode(encoded).currentItem!!.local)
     }
 }

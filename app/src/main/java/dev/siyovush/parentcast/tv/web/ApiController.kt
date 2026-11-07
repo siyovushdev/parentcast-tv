@@ -45,6 +45,7 @@ internal class ApiController(
         return when {
             request.method == "GET" && request.path == "/" -> staticAsset("web/index.html", "text/html; charset=utf-8")
             request.method == "GET" && request.path == "/app.js" -> staticAsset("web/app.js", "text/javascript; charset=utf-8")
+            request.method == "GET" && request.path == "/groups.js" -> staticAsset("web/groups.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/sections.js" -> staticAsset("web/sections.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/media.js" -> staticAsset("web/media.js", "text/javascript; charset=utf-8")
             request.method == "GET" && request.path == "/style.css" -> staticAsset("web/style.css", "text/css; charset=utf-8")
@@ -104,13 +105,34 @@ internal class ApiController(
             "/api/queue/select" -> mutation(request, device) { json ->
                 try {
                     if(json.optBoolean("play") && displayReady?.invoke()==false) 409 to error("OPEN_PLAYER_ON_TV")
-                    else when(dispatcher.call {coordinator.selectQueued(json.optString("queueItemId"),json.optLong("queueVersion",-1),json.optLong("positionMs",0),json.optBoolean("play"),commandStorageKey(request,device,json),requestFingerprint(json))}) {
+                    else if(json.optBoolean("play") && prepared != null && dispatcher.call {
+                        coordinator.batchReplay(commandStorageKey(request,device,json),requestFingerprint(json)) == null &&
+                            coordinator.currentSnapshot().queueState.version == json.optLong("queueVersion",-1) &&
+                            coordinator.currentSnapshot().queueState.items.find { it.queueItemId == json.optString("queueItemId") }?.let { !prepared.canPlay(it.videoId) } == true
+                    }) 409 to error("VIDEO_NOT_READY")
+                    else when(dispatcher.call {coordinator.selectQueued(json.optString("queueItemId"),json.optLong("queueVersion",-1),json.optLong("positionMs",0),json.optBoolean("play"),commandStorageKey(request,device,json),requestFingerprint(json),json.optString("groupId").takeIf { it.isNotBlank() })}) {
                         dev.siyovush.parentcast.tv.queue.BatchAddResult.APPLIED,dev.siyovush.parentcast.tv.queue.BatchAddResult.REPLAY -> 200 to stateBody()
                         dev.siyovush.parentcast.tv.queue.BatchAddResult.CONFLICT -> conflict()
                         dev.siyovush.parentcast.tv.queue.BatchAddResult.KEY_REUSED -> 409 to error("IDEMPOTENCY_KEY_REUSED")
                         else -> 503 to error("COMMAND_STORAGE_ERROR")
                     }
                 } catch (_:IllegalArgumentException){badRequest()}
+            }
+            "/api/queue/group-remove" -> mutation(request,device) { json ->
+                try {
+                    val result=dispatcher.call { coordinator.removeGroup(json.getString("groupId"),json.optLong("queueVersion",-1),commandStorageKey(request,device,json),requestFingerprint(json)) }
+                    queueAdditionResponse(result,null,stateBody()).let {it.code to it.body}
+                } catch (_:IllegalArgumentException){badRequest()} catch (_:org.json.JSONException){badRequest()}
+            }
+            "/api/queue/group-order" -> mutation(request, device) { json ->
+                try {
+                    val groupId=json.optString("groupId").takeIf { it.isNotBlank() }
+                    val a=json.getJSONArray(if(groupId==null) "groupIds" else "videoIds");require(a.length()<=500)
+                    val ids=List(a.length()) { a.getString(it) }
+                    val result=dispatcher.call { coordinator.reorderGroups(ids,groupId,json.optLong("queueVersion",-1),commandStorageKey(request,device,json),requestFingerprint(json)) }
+                    queueAdditionResponse(result,null,stateBody()).let { it.code to it.body }
+                } catch (_:IllegalArgumentException) { badRequest() }
+                  catch (_:org.json.JSONException) { badRequest() }
             }
             "/api/queue/reorder" -> mutation(request, device) { json ->
                 try {
@@ -160,7 +182,7 @@ internal class ApiController(
         val key = json.optString("idempotencyKey")
         if (key.length < 8 || key.length > 100) return ApiResponse(400, error("BAD_REQUEST"))
         val storageKey = commandStorageKey(request, device, json)
-        val fingerprint = if (playlists?.handles(request.path) == true || localMedia?.handles(request.path)==true || request.path in setOf("/api/queue/add", "/api/prepared", "/api/queue/clear-all", "/api/queue/reorder", "/api/queue/select")) requestFingerprint(json) else null
+        val fingerprint = if (playlists?.handles(request.path) == true || localMedia?.handles(request.path)==true || request.path in setOf("/api/queue/add", "/api/prepared", "/api/queue/clear-all", "/api/queue/reorder", "/api/queue/select", "/api/queue/group-order", "/api/queue/group-remove")) requestFingerprint(json) else null
         idempotencyStore.get(storageKey)?.let {
             val legacyAdd = request.path == "/api/queue/add" && it.requestFingerprint == null
             if (fingerprint != null && !legacyAdd && it.requestFingerprint != fingerprint) return ApiResponse(409, error("IDEMPOTENCY_KEY_REUSED"))
@@ -288,7 +310,8 @@ internal class ApiController(
             items.put(
                 JSONObject()
                     .put("queueItemId", item.queueItemId)
-                    .put("videoId", item.videoId).put("local",item.local).put("title",mediaTitle(item.videoId)),
+                    .put("videoId", item.videoId).put("local",item.local).put("title",mediaTitle(item.videoId).ifBlank { item.title })
+                    .put("preparationStatus",prepared?.readiness(item.videoId) ?: JSONObject.NULL).put("ready",prepared?.let { it.readiness(item.videoId)=="READY" } ?: false),
             )
         }
         val error = snapshot.error?.let { failure ->
@@ -299,6 +322,8 @@ internal class ApiController(
         return JSONObject()
             .put("queueVersion", snapshot.queueState.version)
             .put("items", items)
+            .put("groups",JSONArray().apply { snapshot.queueState.groups.forEach { g -> put(JSONObject().put("id",g.id).put("name",g.name).put("source",g.source.name).put("videoIds",JSONArray(g.videoIds))) } })
+            .put("activeGroupId",snapshot.queueState.activeGroupId ?: JSONObject.NULL)
             .put("currentIndex", snapshot.queueState.currentIndex)
             .put("positionMs", snapshot.queueState.positionMs)
             .put("intent", snapshot.queueState.intent.name)

@@ -50,25 +50,43 @@ internal class PreparedLibrary(
         update { s -> s.copy(entries=s.entries.mapValues { (_,e) -> if(e.status==PreparationStatus.RETRY_WAIT) e.copy(retryAtMs=now()) else e }) }
         persistLater();wakeService()
     }
+    fun syncQueue(queue: dev.siyovush.parentcast.tv.queue.QueueState) {
+        val target = snapshot().targetGroupId?.let { id -> queue.groups.find { it.id == id } }
+        if (snapshot().targetGroupId != null && target == null) { update { it.copy(targetGroupId = null) }; persistLater() }
+        val selected = target?.videoIds ?: queue.remainingItems().map { it.videoId }
+        val urgent = if(queue.intent == dev.siyovush.parentcast.tv.queue.PlaybackIntent.PLAY) {
+            if(queue.activeGroup != null) queue.remainingItems().map { it.videoId } else listOfNotNull(queue.currentItem?.videoId)
+        } else emptyList()
+        val online = queue.items.filterNot { it.local }.map { it.videoId }.toSet()
+        schedule((urgent + selected).distinct().filter { it in online })
+    }
+    private fun firstUnprepared(s: PreparationState) = s.plan.firstOrNull { id -> s.entries[id]?.let {
+        !it.local && it.status in setOf(PreparationStatus.WAITING,PreparationStatus.RETRY_WAIT,PreparationStatus.DOWNLOADING)
+    } == true }
+    private fun preemptLater(s: PreparationState) {
+        val id = activeId ?: return
+        if(s.entries[id]?.status == PreparationStatus.DOWNLOADING && firstUnprepared(s) != id) active?.cancel()
+    }
     fun schedule(ids: List<String>) {
         require(ids.size <= 10_000 && ids.all(VIDEO_ID::matches))
-        if (snapshot().plan == ids) return
+        if (snapshot().plan == ids) { preemptLater(snapshot()); return }
         update { s -> s.copy(plan = ids, entries = s.entries + ids.distinct().filterNot { it in s.entries }.associateWith { PreparedEntry(it) }) }
         persistLater()
-        if (activeId?.let { it !in ids } == true) active?.cancel()
+        preemptLater(snapshot())
         val current = snapshot()
         if (current.enabled && !current.paused) wakeService()
     }
-    suspend fun configure(enabled: Boolean, ids: List<String>) {
+    suspend fun configure(enabled: Boolean, ids: List<String>, targetGroupId: String? = null) {
         require(ids.size <= 10_000 && ids.all(VIDEO_ID::matches))
         check(!snapshot().storageError)
         check(snapshot().deleting.isEmpty()) { "BUSY" }
         if (!enabled) active?.cancel()
-        update { s -> s.copy(enabled = enabled, paused = false, plan = ids,
+        update { s -> s.copy(enabled = enabled, paused = false, plan = ids, targetGroupId = targetGroupId,
             entries = (s.entries + ids.distinct().filterNot { it in s.entries }.associateWith { PreparedEntry(it) }).mapValues { (id, e) ->
                 if (enabled && id in ids && e.status == PreparationStatus.DELETED) PreparedEntry(id, title = e.title) else e
             }) }
         persist()
+        preemptLater(snapshot())
         if (enabled) wakeService()
     }
     suspend fun pause() {
@@ -143,6 +161,7 @@ internal class PreparedLibrary(
                 activeId = id
                 update { s1 -> val old = s1.entries.getValue(id); s1.copy(entries = s1.entries + (id to old.copy(status = PreparationStatus.DOWNLOADING, phase = "INFO", error = "", retryAtMs = 0))) }; persist()
                 try {
+                    if(firstUnprepared(snapshot()) != id) throw CancellationException("Programme priority changed")
                     val resolved = source.resolve(id)
                     check(resolved.videoId == id && resolved.durationSeconds > 0) { "UNSUPPORTED" }
                     val tracks = mutableListOf<LocalTrack>()
@@ -218,7 +237,7 @@ internal class PreparedLibrary(
     private suspend fun resetCancelled(id: String) {
         withContext(NonCancellable) {
             update { s -> val old = s.entries[id] ?: PreparedEntry(id)
-                s.copy(entries = s.entries + (id to old.copy(status = PreparationStatus.WAITING, bytes = store.retainedBytes(id), phase = "WAITING", retryAtMs = 0))) }
+                s.copy(entries = s.entries + (id to if(old.status == PreparationStatus.DOWNLOADING) old.copy(status = PreparationStatus.WAITING, bytes = store.retainedBytes(id), phase = "WAITING", retryAtMs = 0) else old)) }
             persist()
         }
     }

@@ -418,6 +418,19 @@ class PlaybackCoordinatorTest {
         assertEquals(1,player.prepareCalls.size);c.close()
     }
 
+    @Test fun playlistNaturalEndStopsAndNeverStartsAnotherPlaylist() = runTest {
+        val ids=listOf("video000002","video000001")
+        val group=dev.siyovush.parentcast.tv.queue.QueueGroup.fixed("source","Уроки",ids,dev.siyovush.parentcast.tv.queue.QueueGroupSource.YOUTUBE_PLAYLIST)
+        val initial=QueueState(items=listOf(QueueItem("a","video000001"),QueueItem("b","video000002"),QueueItem("other","video000003")),
+            currentIndex=1,intent=PlaybackIntent.PLAY,groups=listOf(group),activeGroupId=group.id)
+        val player=FakePlayer();val c=coordinator(FakeSource(),MemoryStore(initial),player)
+        c.start();advanceUntilIdle();c.onEnded(c.currentSnapshot().generation);advanceUntilIdle()
+        assertEquals(listOf("video000002","video000001"),player.prepareCalls.map {it.videoId})
+        c.onEnded(c.currentSnapshot().generation);advanceUntilIdle()
+        assertEquals(PlaybackIntent.STOP,c.currentSnapshot().queueState.intent)
+        assertTrue(c.currentSnapshot().queueState.finished);assertEquals(2,player.prepareCalls.size);c.close()
+    }
+
     private fun TestScope.coordinator(
         source: FakeSource,
         store: MemoryStore,

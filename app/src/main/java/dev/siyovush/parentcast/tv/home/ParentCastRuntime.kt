@@ -64,7 +64,7 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
     init {
         lateinit var api: ApiController
         val playlists = PlaylistApi(previews, AtomicCollectionStore(File(app.noBackupFilesDir, "saved-collections.json")),
-            coordinator, dispatcher, { api.stateBody() })
+            coordinator, dispatcher, metadataTitle=prepared::mediaTitle, stateBody={ api.stateBody() })
         api = ApiController(pairing, tokens, AtomicIdempotencyStore(File(app.filesDir, "idempotency.json")), coordinator,
             dispatcher, RequestSecurity(emptySet(), PORT) { addresses.panelHosts() + network.aliases() },
             { path -> app.assets.open(path).bufferedReader().use { it.readText() } }, playlists,
@@ -72,7 +72,7 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
         controller = api
         coordinator.setListener { snapshot ->
             val q = snapshot.queueState
-            prepared.schedule(q.items.drop(q.currentIndex.coerceAtLeast(0)).filterNot { it.local }.map { it.videoId })
+            prepared.syncQueue(q)
             changed(snapshot)
             observers.toList().forEach { it(snapshot) }
         }

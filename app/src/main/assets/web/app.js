@@ -131,10 +131,11 @@ function setConnection(online) {
 function renderState() {
     if (!state) return;
     byId("playerStatus").textContent = statusNames[state.status] || state.status;
-    byId("currentTitle").textContent = state.currentTitle || "Ролик не выбран";
+    byId("currentTitle").textContent = state.currentTitle || state.items[state.currentIndex]?.title || "Ролик не выбран";
     byId("displayMessage").textContent = state.displayReady === false ? "На телевизоре открыт другой экран. Для просмотра откройте ParentCast; очередь и загрузки можно готовить здесь." : "";
     const current = state.currentIndex >= 0 ? state.currentIndex + 1 : 0;
-    byId("queueSummary").textContent = `Элемент ${current}/${state.items.length}; позиция ${Math.floor(state.positionMs / 1000)} с; intent ${state.intent}; версия ${state.queueVersion}`;
+    const activeGroup = (state.groups || []).find(g=>g.id === state.activeGroupId);
+    byId("queueSummary").textContent = activeGroup ? `Плейлист «${activeGroup.name}»: ${activeGroup.videoIds.indexOf(state.items[state.currentIndex]?.videoId)+1}/${activeGroup.videoIds.length}. В конце — остановка.` : `Элемент ${current}/${state.items.length}; позиция ${Math.floor(state.positionMs / 1000)} с; intent ${state.intent}; версия ${state.queueVersion}`;
     byId("updatedAt").textContent = `Обновлено плеером: ${new Date(state.updatedAtMs).toLocaleString()}`;
     byId("playbackError").textContent = state.error && (state.error.diagnostic || "").includes("PREPARATION_REQUIRED")
         ? "Для VK нажмите «Подготовить очередь / продолжить» и дождитесь готовности файла."
@@ -151,7 +152,7 @@ function renderPrepared() {
     if (!s) return;
     const gib = bytes => (Number(bytes || 0) / 1073741824).toFixed(1);
     const used = Number(s.usedBytes || 0) < 1073741824 ? (Number(s.usedBytes || 0) / 1048576).toFixed(1) + " МиБ" : gib(s.usedBytes) + " ГиБ";
-    byId("preparedSummary").textContent = `${s.enabled ? "Локальный режим" : "Потоковый режим"}${s.paused ? "; подготовка остановлена" : ""}. Готово ${s.ready} из ${s.count}.${s.storageError ? " Ошибка хранилища подготовки." : ""}${s.clearing ? " Удаляем файлы…" : ""}${s.operationError ? " Не удалось удалить файлы; повторите после проверки хранилища." : ""}`;
+    byId("preparedSummary").textContent = `${s.enabled ? "Локальный режим" : "Потоковый режим"}${s.paused ? "; подготовка остановлена" : ""}. Готово в текущем плане: ${s.ready} из ${s.count}. Всего готовых файлов: ${(s.files || []).length}.${s.storageError ? " Ошибка хранилища подготовки." : ""}${s.clearing ? " Удаляем файлы…" : ""}${s.operationError ? " Не удалось удалить файлы; повторите после проверки хранилища." : ""}`;
     byId("preparedStorage").textContent = `Скачано ${used} из ${gib(s.limitBytes)} ГиБ. Свободно на приставке ${gib(s.freeBytes)} ГиБ; резерв ${gib(s.reserveBytes)} ГиБ. Можно скачать ещё ${gib(s.additionalBytes)} ГиБ.`;
     const rows = byId("preparedEntries");
     rows.replaceChildren();
@@ -227,6 +228,7 @@ async function preparationAction(action, videoId) {
 
 function renderQueue() {
     if (typeof renderQueueEditor === "function" && renderQueueEditor()) { renderedQueueKey=null; return; }
+    if(typeof renderProgrammeGroups === "function") { renderProgrammeGroups(); return; }
     const key=JSON.stringify([state.currentIndex,state.items.map(e=>[e.queueItemId,e.videoId,e.local,e.title])]);
     if(renderedQueueKey===key)return;
     renderedQueueKey=key;
@@ -290,6 +292,7 @@ function apiErrorText(error) {
         USB_UNAVAILABLE_OR_PERMISSION_REQUIRED: "Флешка недоступна. Подключите её и выберите папку в родительском меню на ТВ.",
         BAD_MEDIA_INPUT: "Проверьте название и размер файла. Он должен помещаться в лимит 10 ГиБ.",
         LOCAL_FILE_NOT_FOUND: "Файл уже удалён. Обновите список своих видео.",
+        VIDEO_NOT_READY: "Ролик ещё не готов. Подготовьте плейлист и дождитесь загрузки.",
         OPEN_PLAYER_ON_TV: "Для просмотра сначала откройте ParentCast на телевизоре. Очередь и подготовка доступны из пульта.",
         FILE_IN_USE: "Ролик используется плеером. Сначала остановите его и подтвердите удаление заново.",
         PREPARATION_BUSY_OR_STORAGE_ERROR: "Подготовка ещё занята или хранилище недоступно. Остановите подготовку, дождитесь завершения отмены и повторите.",
@@ -467,6 +470,7 @@ function previewCanApply() {
 function queueAdditionMessage(result) {
     const addition = result && result.addition;
     if (!addition) return "Команда добавления обработана. Воспроизведение не запущено.";
+    if (addition.groupId) return `Плейлист добавлен в программу. Новых видео: ${addition.added}; общих с программой: ${addition.skipped}. Воспроизведение не запущено.`;
     if (addition.added === 0) return "Все выбранные ролики уже есть в очереди. Повторы не добавлены.";
     return `Добавлено новых: ${addition.added}. Пропущено повторов: ${addition.skipped}. Воспроизведение не запущено.`;
 }
@@ -563,6 +567,9 @@ function renderPreview() {
     byId("playlistPreview").hidden = preview.status === "LOADING" || preview.status === "CANCELLED";
     byId("playlistCancelButton").hidden = preview.status === "CANCELLED";
     byId("playlistTitle").textContent = preview.title || "Плейлист";
+    if(byId("playlistGroupName").dataset.previewId !== preview.previewId) {
+        byId("playlistGroupName").value=preview.title || "Плейлист";byId("playlistGroupName").dataset.previewId=preview.previewId;
+    }
     const reported = preview.reportedCount == null ? "неизвестно" : String(preview.reportedCount);
     const selectableCount = entries.filter(entry => entry.selectable).length;
     byId("playlistCount").textContent = `Получено: ${entries.length}; заявлено ${preview.provider === "VK" ? "VK" : "YouTube"}: ${reported}; допускаются к выбору: ${selectableCount}. Исходный порядок сохранён.`;
@@ -598,9 +605,12 @@ function updateSelectionControls() {
     const queued = new Set((state && state.items || []).map(item => item.videoId));
     const newIds = new Set((preview && preview.entries || []).filter(entry => selectedIndices.has(entry.index) && entry.selectable && !queued.has(entry.videoId)).map(entry => entry.videoId));
     byId("playlistSelectedCount").textContent = `Выбрано: ${selected}; новых: ${newIds.size}. Ролики из очереди повторно не добавляются.`;
-    byId("playlistApplyButton").textContent = selected && !newIds.size ? "Уже в очереди" : "Добавить выбранные";
+    const groupMode = Array.isArray(state?.groups);
+    const ids = [...new Set((preview?.entries || []).filter(e=>selectedIndices.has(e.index) && e.selectable).map(e=>e.videoId))];
+    const sameGroup = groupMode && state.groups.some(g=>JSON.stringify(g.videoIds)===JSON.stringify(ids) && g.source===(preview?.provider === "VK" ? "VK_PLAYLIST" : "YOUTUBE_PLAYLIST") && g.name===byId("playlistGroupName").value.trim());
+    byId("playlistApplyButton").textContent = groupMode ? sameGroup ? "Плейлист уже в программе" : "Добавить плейлист в программу" : selected && !newIds.size ? "Уже в очереди" : "Добавить выбранные";
     const previewId = preview ? preview.previewId : "";
-    byId("playlistApplyButton").disabled = !previewCanApply() || !selected || !newIds.size || busyActions.has("apply") || !state || hasPending("/api/playlists/apply", "previewId", previewId);
+    byId("playlistApplyButton").disabled = !previewCanApply() || !selected || (groupMode ? sameGroup : !newIds.size) || busyActions.has("apply") || !state || hasPending("/api/playlists/apply", "previewId", previewId);
     byId("collectionSaveButton").disabled = !previewCanApply() || !selected || busyActions.has("save") || !byId("collectionName").value.trim() || hasPending("/api/collections/save", "previewId", previewId);
     byId("playlistPreviewButton").disabled = previewRequesting || busyActions.has("cancel") || Object.values(pendingCommands).some(command => command.path === "/api/playlists/preview");
     byId("playlistCancelButton").disabled = busyActions.has("cancel") || hasPending("/api/playlists/cancel", "previewId", previewId);
@@ -610,8 +620,10 @@ function updateSelectionControls() {
     document.querySelectorAll("button[data-collection-action]").forEach(button => {
         const id = button.dataset.collectionId;
         const collection = collections.find(item => item.id === id);
-        const alreadyQueued = button.dataset.collectionAction === "apply" && collection && collection.videoIds.every(videoId => queued.has(videoId));
-        if (button.dataset.collectionAction === "apply") button.textContent = alreadyQueued ? "Подборка уже в очереди" : "Добавить подборку в очередь";
+        const alreadyQueued = button.dataset.collectionAction === "apply" && collection && (groupMode
+            ? state.groups.some(g=>g.source==="COLLECTION" && g.name===collection.name && JSON.stringify(g.videoIds)===JSON.stringify([...new Set(collection.videoIds)]))
+            : collection.videoIds.every(videoId => queued.has(videoId)));
+        if (button.dataset.collectionAction === "apply") button.textContent = alreadyQueued ? "Подборка уже в программе" : "Добавить как плейлист";
         button.disabled = Boolean(alreadyQueued) || busyActions.has(`collection-${id}`) || hasPending(`/api/collections/${button.dataset.collectionAction}`, "collectionId", id);
     });
 }
@@ -668,6 +680,7 @@ function selectedPayload() {
 async function applyPreview() {
     if (!state) return;
     const payload = {...selectedPayload(), queueVersion: state.queueVersion, idempotencyKey: commandKey()};
+    if(Array.isArray(state.groups))payload.groupName=byId("playlistGroupName").value.trim();
     return withBusy("apply", async () => {
         try {
             await perform(`apply-preview-${commandKey()}`, "/api/playlists/apply", payload);
@@ -725,7 +738,7 @@ function renderCollections() {
         const ids = document.createElement("ol");
         collection.videoIds.forEach(id => {
             const row = document.createElement("li");
-            row.textContent = id;
+            row.textContent = collection.titles?.[id] || id;
             ids.append(row);
         });
         details.append(summary, ids);
@@ -782,6 +795,7 @@ byId("playlistApplyButton").addEventListener("click", () => run(applyPreview));
 byId("collectionSaveButton").addEventListener("click", () => run(saveCollection));
 byId("collectionsRefreshButton").addEventListener("click", () => run(refreshCollections));
 byId("collectionName").addEventListener("input", updateSelectionControls);
+byId("playlistGroupName").addEventListener("input",updateSelectionControls);
 byId("playlistEntries").addEventListener("change", event => {
     const input = event.target.closest('input[type="checkbox"][data-index]');
     if (!input || input.disabled) return;

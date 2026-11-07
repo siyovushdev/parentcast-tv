@@ -5,7 +5,7 @@ import dev.siyovush.parentcast.tv.collections.CollectionStore
 import dev.siyovush.parentcast.tv.collections.SavedCollection
 import dev.siyovush.parentcast.tv.playback.PlaybackCoordinator
 import dev.siyovush.parentcast.tv.playlist.*
-import dev.siyovush.parentcast.tv.queue.BatchAddResult
+import dev.siyovush.parentcast.tv.queue.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -17,6 +17,7 @@ internal class PlaylistApi(
     private val collections: CollectionStore,
     private val coordinator: PlaybackCoordinator,
     private val dispatcher: CallDispatcher,
+    private val metadataTitle: (String) -> String = { "" },
     private val stateBody: () -> String,
 ) {
     fun handles(path: String): Boolean = path in setOf(
@@ -53,7 +54,16 @@ internal class PlaylistApi(
                     ?: return@safely failure(404, "PREVIEW_NOT_FOUND")
                 response(200, previewJson(preview))
             }
-            "/api/playlists/apply" -> add(selected(owner, json), json, commandKey, fingerprint)
+            "/api/playlists/apply" -> {
+                val selection = selectedEntries(owner,json)
+                val preview = previews.get(owner,json.getString("previewId"))!!
+                val result = preview.result!!
+                val ids = selection.map { it.videoId!! }
+                val source = if(result.provider == dev.siyovush.parentcast.tv.media.MediaProvider.VK) QueueGroupSource.VK_PLAYLIST else QueueGroupSource.YOUTUBE_PLAYLIST
+                require(!json.has("groupName") || json.get("groupName") is String && json.getString("groupName").length <= 200)
+                val group = QueueGroup.fixed("playlist:"+preview.playlistKey, json.optString("groupName").ifBlank { result.title },ids,source)
+                add(ids,json,commandKey,fingerprint,group,selection.associate { it.videoId!! to cleanVideoTitle(it.title) })
+            }
             "/api/collections/save" -> {
                 val id = UUID.nameUUIDFromBytes(commandKey.toByteArray()).toString()
                 val existing = collections.get(id)
@@ -62,13 +72,13 @@ internal class PlaylistApi(
                 }
                 // Existing snapshot can be acknowledged after process death without refetching YouTube.
                 val collection = existing ?: SavedCollection(id, (json.get("name") as String).trim(),
-                    selected(owner, json), System.currentTimeMillis(), fingerprint).also(collections::save)
+                    selected(owner, json), System.currentTimeMillis(), fingerprint, selectedEntries(owner,json).associate { it.videoId!! to cleanVideoTitle(it.title) }).also(collections::save)
                 response(200, JSONObject().put("collection", collectionJson(collection)))
             }
             "/api/collections/apply" -> {
                 val collection = collections.get(json.getString("collectionId"))
                     ?: return@safely failure(404, "COLLECTION_NOT_FOUND")
-                add(collection.videoIds, json, commandKey, fingerprint)
+                add(collection.videoIds, json, commandKey, fingerprint, QueueGroup.fixed("collection:"+collection.id,collection.name,collection.videoIds,QueueGroupSource.COLLECTION), collection.videoIds.associateWith { cleanVideoTitle(collection.titles[it] ?: metadataTitle(it)) }.filterValues { it.isNotBlank() })
             }
             "/api/collections/delete" -> {
                 collections.delete(json.getString("collectionId"))
@@ -78,7 +88,8 @@ internal class PlaylistApi(
         }
     } ?: failure(404, "NOT_FOUND")
 
-    private fun selected(owner: String, json: JSONObject): List<String> {
+    private fun selected(owner: String,json: JSONObject): List<String> = selectedEntries(owner,json).map { it.videoId!! }
+    private fun selectedEntries(owner: String, json: JSONObject): List<PlaylistEntry> {
         val preview = previews.get(owner, json.getString("previewId")) ?: throw PreviewException(404, "PREVIEW_NOT_FOUND")
         val result = preview.result ?: throw PreviewException(409, "PREVIEW_NOT_READY")
         if (preview.state != PreviewState.READY || result.status !in setOf(PlaylistStatus.COMPLETE, PlaylistStatus.PARTIAL)) {
@@ -96,15 +107,15 @@ internal class PlaylistApi(
         return values.sorted().map { index ->
             val entry = entries[index] ?: throw IllegalArgumentException()
             require(entry.selectable && entry.videoId != null)
-            entry.videoId!!
+            entry
         }
     }
 
-    private fun add(ids: List<String>, json: JSONObject, commandKey: String, fingerprint: String): ApiResponse {
+    private fun add(ids: List<String>, json: JSONObject, commandKey: String, fingerprint: String, group: QueueGroup, titles: Map<String,String>): ApiResponse {
         val version = json.get("queueVersion")
         require(version is Int || version is Long)
         require((version as Number).toLong() >= 0)
-        return batchResponse(dispatcher.call { coordinator.addBatch(ids, version.toLong(), commandKey, fingerprint) }, commandKey)
+        return batchResponse(dispatcher.call { coordinator.addBatch(ids, version.toLong(), commandKey, fingerprint, group=group,titles=titles) }, commandKey)
     }
 
     private fun batchResponse(result: BatchAddResult, key: String): ApiResponse =
@@ -131,9 +142,14 @@ internal class PlaylistApi(
             })
     }
 
-    private fun collectionJson(collection: SavedCollection): JSONObject = JSONObject()
-        .put("id", collection.id).put("name", collection.name).put("videoIds", JSONArray(collection.videoIds))
-        .put("createdAtMs", collection.createdAtMs)
+    private fun collectionJson(collection: SavedCollection): JSONObject {
+        val cached = dispatcher.call { coordinator.currentSnapshot().queueState.items.associate { it.videoId to it.title } }
+        val titles = collection.videoIds.associateWith { id -> collection.titles[id].orEmpty().ifBlank {
+            cached[id].orEmpty().ifBlank { cleanVideoTitle(metadataTitle(id)) }
+        } }.filterValues { it.isNotBlank() }
+        return JSONObject().put("id",collection.id).put("name",collection.name).put("videoIds",JSONArray(collection.videoIds))
+            .put("createdAtMs",collection.createdAtMs).put("titles",JSONObject(titles))
+    }
 
     private fun response(code: Int, json: JSONObject) = ApiResponse(code, json.toString())
     private fun failure(code: Int, error: String) = response(code, JSONObject().put("error", error))
