@@ -1,18 +1,20 @@
 package dev.siyovush.parentcast.tv.web
 
-import java.security.SecureRandom
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class PairingManager(
     private val pinSettings: PinSettings,
     private val tokenStore: TokenStore,
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
-    private val random = SecureRandom()
-    private var challenge: PairingChallenge? = null
     private val attempts = PinAttemptLimiter()
 
-    @Synchronized
+    // A UI read must not wait for the crypto/write monitor. SharedPreferences reads are thread-safe.
     fun hasPin(): Boolean = pinSettings.hasPin()
+
+    suspend fun changePin(pin: String, currentPin: String?): Boolean =
+        withContext(Dispatchers.Default) { createPin(pin, currentPin) }
 
     @Synchronized
     fun createPin(pin: String, currentPin: String? = null): Boolean {
@@ -23,24 +25,13 @@ class PairingManager(
     }
 
     @Synchronized
-    fun beginPairing(currentPin: String): PairingChallenge? {
-        if (!hasPin() || !isCurrentPin(currentPin)) return null
-        val now = clock()
-        val code = (random.nextInt(900_000) + 100_000).toString()
-        return PairingChallenge(code, now + PAIRING_WINDOW_MS).also { challenge = it }
-    }
-
-    @Synchronized
-    fun completePairing(code: String, pin: String, label: String, clientKey: String): Pair<DeviceRecord, String>? {
+    fun completePairing(pin: String, label: String, clientKey: String): Pair<DeviceRecord, String>? {
         if (!attempts.isAllowed(clientKey, clock()) || !hasPin()) return null
-        val current = challenge
-        if (current == null || current.code != code || current.expiresAtMs < clock()) return null
         if (!isCurrentPin(pin)) {
             attempts.recordFailure(clientKey, clock())
             return null
         }
         attempts.clear(clientKey)
-        challenge = null
         return tokenStore.create(label)
     }
 
@@ -71,7 +62,3 @@ class PairingManager(
             failures[key].orEmpty().filter { now - it <= windowMs }
     }
 }
-
-data class PairingChallenge(val code: String, val expiresAtMs: Long)
-
-private const val PAIRING_WINDOW_MS = 120_000L

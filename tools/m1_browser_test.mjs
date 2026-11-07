@@ -91,10 +91,8 @@ try {
     if (await evaluate("document.getElementById('controlSection').hidden")) {
         const pin = privateValue("from tools import m1_hardware_test as h; h.adb('shell', 'input', 'keyevent', 'KEYCODE_MENU'); print(h.create_pin_if_needed() or '')");
         if (!pin) throw new Error("PIN setup requires PARENTCAST_CURRENT_PIN for an existing PIN");
-        const code = privateValue("import sys; from tools.m1_hardware_test import begin_pairing; print(begin_pairing(sys.stdin.read()))", pin);
         await setValue("deviceLabel", "Ubuntu Chrome M1");
         await setValue("pin", pin);
-        await setValue("pairingCode", code);
         await click("#pairButton");
         await waitFor("!document.getElementById('controlSection').hidden && state !== null", "Browser pairing failed", 60000);
     }

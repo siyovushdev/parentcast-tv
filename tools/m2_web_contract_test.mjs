@@ -55,7 +55,7 @@ const context = vm.createContext({
     },
 });
 vm.runInContext(source, context, {filename: "app.js"});
-await vm.runInContext("api('/api/pair', 'POST', {label:'Fixture', pin:'123456', code:'123456'})", context);
+await vm.runInContext("api('/api/pair', 'POST', {label:'Fixture', pin:'123456'})", context);
 vm.runInContext("device = {deviceId:'fixture', token:'synthetic-test-only'}; state = {queueVersion:7,items:[],currentIndex:-1,positionMs:0,intent:'STOP',status:'STOPPED',updatedAtMs:0};", context);
 
 const postBodies = {

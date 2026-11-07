@@ -42,6 +42,7 @@ import dev.siyovush.parentcast.tv.web.ParentHttpServer
 import dev.siyovush.parentcast.tv.web.PinSecurity
 import dev.siyovush.parentcast.tv.web.RequestSecurity
 import dev.siyovush.parentcast.tv.web.SharedPinSettings
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -58,9 +59,6 @@ import dev.siyovush.parentcast.tv.parent.PrivilegedModeRequirements
 import dev.siyovush.parentcast.tv.parent.PrivilegedTrialSession
 import java.lang.ref.WeakReference
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 open class MainActivity : Activity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -84,9 +82,9 @@ open class MainActivity : Activity() {
     private lateinit var playlistPreviews: PlaylistPreviewManager
     private lateinit var pinInput: EditText
     private lateinit var newPinInput: EditText
+    private lateinit var pinSaveStatus: TextView
+    private var pinSaving = false
     private lateinit var savePinButton: Button
-    private lateinit var pairButton: Button
-    private lateinit var pairStatus: TextView
     private lateinit var panelStatus: TextView
     private lateinit var devicesContainer: LinearLayout
     private var latestSnapshot = CoordinatorSnapshot()
@@ -152,9 +150,8 @@ open class MainActivity : Activity() {
             it.transformationMethod = PasswordTransformationMethod.getInstance()
             it.isSaveEnabled = false
         }
+        pinSaveStatus = debugRoot.findViewById(R.id.pinSaveStatus)
         savePinButton = debugRoot.findViewById(R.id.savePinButton)
-        pairButton = debugRoot.findViewById(R.id.pairButton)
-        pairStatus = debugRoot.findViewById(R.id.pairStatus)
         panelStatus = debugRoot.findViewById(R.id.panelStatus)
         devicesContainer = debugRoot.findViewById(R.id.devicesContainer)
 
@@ -205,7 +202,6 @@ open class MainActivity : Activity() {
             panelStatus.text = "HTTP server error: ${error.javaClass.simpleName}"
         }
         savePinButton.setOnClickListener { savePin() }
-        pairButton.setOnClickListener { beginPairing() }
         renderPinUi()
         configureParentModeControls()
 
@@ -382,34 +378,39 @@ open class MainActivity : Activity() {
     }
 
     private fun savePin() {
-        if (!requireParent()) return
+        if (pinSaving || !requireParent()) return
         val hasPin = pairingManager.hasPin()
         val currentPin = if (hasPin) pinInput.text.toString() else null
         val newPin = if (hasPin) newPinInput.text.toString() else pinInput.text.toString()
         if (!PinSecurity.isValidPin(newPin)) {
-            debugStatus.setText(R.string.debug_pin_invalid)
+            pinSaveStatus.setText(R.string.debug_pin_invalid)
             return
         }
-        if (!pairingManager.createPin(newPin, currentPin)) {
-            debugStatus.setText(R.string.debug_pin_wrong)
-            return
-        }
+        pinSaving = true
+        savePinButton.isEnabled = false
+        pinInput.isEnabled = false
+        newPinInput.isEnabled = false
         pinInput.text.clear()
         newPinInput.text.clear()
-        debugStatus.setText(R.string.debug_pin_saved)
-        renderPinUi()
-    }
-
-    private fun beginPairing() {
-        if (!requireParent()) return
-        val challenge = pairingManager.beginPairing(pinInput.text.toString())
-        if (challenge == null) {
-            pairStatus.setText(R.string.debug_pin_required)
-            return
+        pinSaveStatus.setText(R.string.debug_pin_saving)
+        scope.launch {
+            try {
+                val saved = pairingManager.changePin(newPin, currentPin)
+                if (!retired && !isDestroyed) {
+                    pinSaveStatus.setText(if (saved) R.string.debug_pin_saved else R.string.debug_pin_wrong)
+                    renderPinUi()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (!retired && !isDestroyed) pinSaveStatus.setText(R.string.debug_pin_save_failed)
+            } finally {
+                pinSaving = false
+                savePinButton.isEnabled = true
+                pinInput.isEnabled = true
+                newPinInput.isEnabled = true
+            }
         }
-        pinInput.text.clear()
-        val expiry = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(challenge.expiresAtMs))
-        pairStatus.text = "Код: ${challenge.code} · до $expiry"
     }
 
     private fun renderPinUi() {
@@ -419,7 +420,6 @@ open class MainActivity : Activity() {
         newPinInput.visibility = if (hasPin) View.VISIBLE else View.GONE
         savePinButton.visibility = View.VISIBLE
         savePinButton.setText(if (hasPin) R.string.debug_change_pin else R.string.debug_save_pin)
-        pairButton.visibility = if (hasPin) View.VISIBLE else View.GONE
         renderDevices()
     }
 
@@ -660,7 +660,6 @@ open class MainActivity : Activity() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         pinInput.text.clear()
         newPinInput.text.clear()
-        pairStatus.setText(R.string.debug_pair_status)
         debugVisible = false
         setContentView(playerRoot)
         render(latestSnapshot)

@@ -6,6 +6,7 @@ let device = readJson(DEVICE_KEY, null);
 let pendingCommands = readJson(COMMANDS_KEY, {});
 let state = null;
 let refreshing = false;
+let signingIn = false;
 let preview = null;
 let previewPoll = null;
 let previewRequesting = false;
@@ -75,25 +76,31 @@ async function api(path, method, body) {
 }
 
 async function pair() {
+    if (signingIn) return;
+    signingIn = true;
+    byId("pairButton").disabled = true;
     const label = byId("deviceLabel").value.trim() || "Browser";
     const pin = byId("pin").value;
-    const code = byId("pairingCode").value.trim();
-    byId("pairingMessage").textContent = "Сопряжение…";
+    byId("pin").value = "";
+    byId("pairingMessage").textContent = "Вход…";
     try {
-        const result = await api("/api/pair", "POST", {label, pin, code});
+        const result = await api("/api/pair", "POST", {label, pin});
         device = {deviceId: result.deviceId, token: result.token};
         pendingCommands = {};
         localStorage.removeItem(COMMANDS_KEY);
         writeJson(DEVICE_KEY, device);
-        byId("pin").value = "";
-        byId("pairingCode").value = "";
-        byId("pairingMessage").textContent = "Устройство сопряжено";
+        byId("pairingMessage").textContent = "Браузер авторизован";
         showPairing(false);
         await refreshState();
         await refreshDevices();
         await refreshCollections();
     } catch (error) {
-        byId("pairingMessage").textContent = "Не удалось сопрячь. Проверьте PIN и код.";
+        byId("pairingMessage").textContent = error.status === 401
+            ? "PIN не принят. После 5 неверных попыток подождите 10 минут."
+            : "Не удалось войти. Проверьте связь с приставкой и повторите вход.";
+    } finally {
+        signingIn = false;
+        byId("pairButton").disabled = false;
     }
 }
 

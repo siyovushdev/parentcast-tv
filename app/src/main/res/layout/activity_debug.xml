@@ -85,20 +85,19 @@
             android:layout_marginTop="8dp"
             android:text="@string/debug_save_pin" />
 
-        <Button
-            android:id="@+id/pairButton"
+        <TextView
+            android:id="@+id/pinSaveStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/debug_pair"
-            android:visibility="gone" />
+            android:accessibilityLiveRegion="polite"
+            android:textColor="#FDD663"
+            android:textSize="18sp" />
 
         <TextView
-            android:id="@+id/pairStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="@string/debug_pair_status"
+            android:text="@string/debug_browser_auth_hint"
             android:textColor="#FDD663"
             android:textSize="18sp" />
 

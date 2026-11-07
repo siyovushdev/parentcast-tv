@@ -159,8 +159,85 @@ class ApiControllerTest {
         assertEquals(403, fixture.controller.handle(ApiRequest("POST", "/api/queue/clear", noCustomHeader, "{}", "test-client")).code)
     }
 
+    @Test
+    fun pinOnlyLoginDoesNotRequireTvActionOrAuthorizePinAsBearer() {
+        val fixture = Fixture()
+        val before = fixture.coordinator.currentSnapshot().queueState
+        val response = fixture.controller.handle(request("POST", "/api/pair", fixture.auth(null), "{\"pin\":\"739251\"}"))
+        assertEquals(200, response.code)
+        val token = JSONObject(response.body).getString("token")
+
+        assertNotEquals("739251", token)
+        assertEquals("Browser", fixture.tokenStore.verify(token)!!.label)
+        assertEquals(200, fixture.controller.handle(request("GET", "/api/state", fixture.auth(token))).code)
+        assertEquals(401, fixture.controller.handle(request("GET", "/api/state", fixture.auth("739251"))).code)
+        assertEquals(before, fixture.coordinator.currentSnapshot().queueState)
+    }
+
+    @Test
+    fun newLoginKeepsStoredTokensAndRevocationIsIndependent() {
+        val fixture = Fixture()
+        val existing = fixture.tokenStore.create("Existing browser").second
+        val first = fixture.pair()
+        val second = fixture.pair()
+        assertNotEquals(existing, first)
+        assertNotEquals(first, second)
+        val reloaded = AtomicTokenStore(fixture.tokenFile)
+        listOf(existing, first, second).forEach { assertTrue(reloaded.verify(it) != null) }
+
+        val revoke = JSONObject().put("deviceId", reloaded.verify(second)!!.deviceId)
+            .put("idempotencyKey", "revoke-new-browser").toString()
+        assertEquals(200, fixture.controller.handle(request("POST", "/api/devices/revoke", fixture.auth(existing), revoke)).code)
+        assertEquals(401, fixture.controller.handle(request("GET", "/api/state", fixture.auth(second))).code)
+        listOf(existing, first).forEach {
+            assertEquals(200, fixture.controller.handle(request("GET", "/api/state", fixture.auth(it))).code)
+        }
+    }
+
+    @Test
+    fun pinOnlyLoginCountsFailuresAndLeavesExistingTokenUsable() {
+        val fixture = Fixture()
+        val existing = fixture.tokenStore.create("Existing browser").second
+        val wrong = JSONObject().put("pin", "000000").toString()
+        repeat(5) {
+            assertEquals(401, fixture.controller.handle(request("POST", "/api/pair", fixture.auth(null), wrong)).code)
+        }
+        val correct = JSONObject().put("pin", "739251").toString()
+        assertEquals(401, fixture.controller.handle(request("POST", "/api/pair", fixture.auth(null), correct)).code)
+        assertEquals(1, fixture.tokenStore.list().size)
+        assertEquals(200, fixture.controller.handle(request("GET", "/api/state", fixture.auth(existing))).code)
+    }
+
+    @Test
+    fun pinOnlyLoginRejectsMissingOrMalformedPinWithoutIssuingTokens() {
+        val fixture = Fixture()
+        listOf("{}", "{\"pin\":\"\"}", "{\"pin\":\"123\"}", "{\"pin\":\"abcdef\"}").forEach { body ->
+            assertEquals(401, fixture.controller.handle(request("POST", "/api/pair", fixture.auth(null), body)).code)
+        }
+        assertTrue(fixture.tokenStore.list().isEmpty())
+    }
+
+    @Test
+    fun pinOnlyLoginKeepsHostOriginRefererAndCustomHeaderGuards() {
+        val fixture = Fixture()
+        val headers = fixture.auth(null)
+        val body = JSONObject().put("pin", "739251").toString()
+        val rejected = listOf(
+            (headers + ("host" to "evil.example:8765")) to 421,
+            (headers + ("origin" to "https://evil.example")) to 403,
+            (headers + ("referer" to "https://evil.example/")) to 403,
+            (headers - "x-parentcast-client") to 403,
+        )
+        rejected.forEach { (requestHeaders, status) ->
+            assertEquals(status, fixture.controller.handle(request("POST", "/api/pair", requestHeaders, body)).code)
+        }
+        assertEquals(403, fixture.controller.handle(request("OPTIONS", "/api/pair", headers)).code)
+        assertTrue(fixture.tokenStore.list().isEmpty())
+    }
+
     private inner class Fixture {
-        val tokenStore = AtomicTokenStore(file("devices.json"))
+        val tokenFile = file("devices.json")
+        val tokenStore = AtomicTokenStore(tokenFile)
         val settings = object : PinSettings {
             private val record = PinSecurity.hashPin("739251")
             override fun hasPin(): Boolean = true
@@ -204,9 +281,7 @@ class ApiControllerTest {
         )
 
         fun pair(): String {
-            val challenge = pairingManager.beginPairing("739251")!!
             val body = JSONObject()
-                .put("code", challenge.code)
                 .put("pin", "739251")
                 .put("label", "Test")
                 .toString()
