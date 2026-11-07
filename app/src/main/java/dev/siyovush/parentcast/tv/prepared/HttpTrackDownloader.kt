@@ -86,13 +86,13 @@ internal class HttpTrackDownloader(
                         progress(bytes, total)
                         body.byteStream().use { input ->
                             (try {FileOutputStream(files.partial, offset > 0)} catch(error:java.io.IOException){throw MediaStorageFailure(error)}).use { output ->
-                                val buffer = ByteArray(128 * 1024)
-                                while (true) {
+                                copyDownloadBlocks(input, { operationContext.ensureActive() }) { buffer, count ->
                                     operationContext.ensureActive()
-                                    val count = input.read(buffer); if (count < 0) break
                                     check(bytes + count <= total && bytes + count <= allowance) { "DOWNLOAD_FAILED" }
-                                    check(target.parentFile!!.usableSpace - count >= FREE_RESERVE) { "NO_SPACE" }
-                                    if (budget != null) budget.write(output, buffer, count,target) else try {output.write(buffer, 0, count)} catch(error:java.io.IOException){throw MediaStorageFailure(error)}
+                                    if (budget != null) budget.write(output, buffer, count,target) else {
+                                        check(target.parentFile!!.usableSpace - count >= FREE_RESERVE) { "NO_SPACE" }
+                                        try {output.write(buffer, 0, count)} catch(error:java.io.IOException){throw MediaStorageFailure(error)}
+                                    }
                                     bytes += count
                                     val now = System.nanoTime(); if (now - lastProgress > 500_000_000L) { progress(bytes,total); lastProgress=now }
                                 }
@@ -112,6 +112,34 @@ internal class HttpTrackDownloader(
             } finally { cancellation.cancel() }
         }
         throw RetryableTransfer("RANGE_OR_REDIRECT_FAILED")
+    }
+}
+
+/** Network reads may return only a TLS/Okio packet despite the larger buffer. Perform
+ * the live volume/quota gate per bounded physical write, not per network packet.
+ * Preserve an incomplete block on network failure so the existing Range retry can use it. */
+internal fun copyDownloadBlocks(
+    input: java.io.InputStream,
+    checkCancellation: () -> Unit,
+    write: (ByteArray, Int) -> Unit,
+) {
+    val buffer = ByteArray(128 * 1024)
+    var buffered = 0
+    while (true) {
+        checkCancellation()
+        val count = try { input.read(buffer, buffered, buffer.size - buffered) }
+        catch (error: java.io.IOException) {
+            if (buffered > 0) { checkCancellation(); write(buffer, buffered) }
+            throw error
+        }
+        if (count < 0) {
+            if (buffered > 0) { checkCancellation(); write(buffer, buffered) }
+            return
+        }
+        buffered += count
+        if (buffered == buffer.size) {
+            checkCancellation(); write(buffer, buffered); buffered = 0
+        }
     }
 }
 

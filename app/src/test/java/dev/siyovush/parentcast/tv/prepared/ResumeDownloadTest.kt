@@ -91,8 +91,9 @@ class ResumeDownloadTest {
     @Test fun cancellationKeepsPartialButDoesNotPublishPlayableTarget() = runBlocking {
         MockWebServer().use { server ->
             val target=File(temp.newFolder(),"video000001.video.mp4");val started=CompletableDeferred<Unit>()
-            server.enqueue(full().throttleBody(8192,100,java.util.concurrent.TimeUnit.MILLISECONDS))
-            val work=launch(Dispatchers.IO) {downloader().download(spec(server),target,1_000_000) {bytes,_->if(bytes>0)started.complete(Unit)}}
+            val larger = ByteArray(4 * data.size) { (it % 251).toByte() }
+            server.enqueue(full(larger).throttleBody(8192,100,java.util.concurrent.TimeUnit.MILLISECONDS))
+            val work=launch(Dispatchers.IO) {downloader().download(spec(server).copy(sizeBytes=larger.size.toLong()),target,1_000_000) {bytes,_->if(bytes>0)started.complete(Unit)}}
             withTimeout(5000) {started.await()};withTimeout(5000) {work.cancelAndJoin()}
             assertFalse(target.exists());assertTrue(File(target.path+".part").length()>0);assertNotNull(ResumeFiles(target).read())
         }
