@@ -15,6 +15,11 @@ Chrome-регрессия воспроизвела причину: при дву
 Commit/push/Draft PR к online-recovery; без Merge/Release/Happ/system/reboot.
 
 
-Результат разработки: regression FAIL→PASS, обе Chrome fixture suite/lint/debug/release
-PASS. Debugv26 готов; установка покаNOT_RUN, ожидается выбор времени пользователем,
-потому что показ идёт. Данные/проигрывание не менялись. Отчёт: docs/reports/Web-layout-notice.md.
+Результат: regression FAIL→PASS, обе Chrome fixture suite/lint/debug/release PASS.
+По явной команде владельца debugv26 установлен после STOP без очистки; liveCSS
+обновлён,240элементов/4группы/готовые файлы/SHA10защищённых файлов сохранены.
+STOP оставлен. Подготовка104серий возобновлена:1DOWNLOADING/103WAITING,
+байты первой серии14.7→18.3MB за61s, позднее24.2MB; это ещё не готовый файл.
+Новый screenshot владельца показывает нормальную раскладку. Total/percentnull
+не заменялись вымышленными процентами. Дополнительный интерфейс загрузок не добавлялся.
+Отчёт: docs/reports/Web-layout-notice.md. Без Merge/Release.
