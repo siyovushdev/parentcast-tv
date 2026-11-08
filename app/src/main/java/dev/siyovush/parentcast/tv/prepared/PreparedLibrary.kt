@@ -18,7 +18,7 @@ internal fun interface TrackDownloader {
 internal class PreparedLibrary(
     private val store: PreparedStore, private val source: YouTubeSource,
     private val downloader: TrackDownloader, private val scope: CoroutineScope,
-    private val validate: (File, Boolean, Long) -> Unit,
+    private val validate: suspend (File, Boolean, Long) -> Unit,
     private val wakeService: () -> Unit = {},
     limit: Long = LIBRARY_LIMIT,
     private val onFailure: (String, Throwable) -> Unit = { _, _ -> },
@@ -126,7 +126,7 @@ internal class PreparedLibrary(
                 when {
                     enabled && id in ids && e.status == PreparationStatus.DELETED -> PreparedEntry(id, title = e.title)
                     enabled && id in ids && e.status in setOf(PreparationStatus.ERROR, PreparationStatus.RETRY_WAIT) ->
-                        e.copy(status = PreparationStatus.WAITING, error = "", attempts = 0, retryAtMs = 0, phase = "WAITING")
+                        e.copy(status = PreparationStatus.WAITING, error = "", attempts = 0, integrityAttempts = 0, retryAtMs = 0, phase = "WAITING")
                     else -> e
                 }
             }) }
@@ -142,7 +142,7 @@ internal class PreparedLibrary(
         check(snapshot().deleting.isEmpty()) { "BUSY" }
         check(synchronized(lock) { !storageBusy }) { "BUSY" }
         update { s -> check(!storageBusy) { "BUSY" };s.copy(paused = false, entries = s.entries.mapValues { (_, e) ->
-            if (!e.local && e.status in setOf(PreparationStatus.ERROR, PreparationStatus.RETRY_WAIT)) e.copy(status = PreparationStatus.WAITING, error = "", attempts = 0, retryAtMs = 0) else e
+            if (!e.local && e.status in setOf(PreparationStatus.ERROR, PreparationStatus.RETRY_WAIT)) e.copy(status = PreparationStatus.WAITING, error = "", attempts = 0, integrityAttempts = 0, retryAtMs = 0) else e
         }) }; persist(); if (snapshot().enabled) wakeService()
     }
     suspend fun deleteMedia(id: String? = null) {
@@ -212,8 +212,12 @@ internal class PreparedLibrary(
                     continue
                 }
                 activeId = id
-                update { s1 -> val old = s1.entries.getValue(id); s1.copy(entries = s1.entries + (id to old.copy(status = PreparationStatus.DOWNLOADING, phase = "INFO", error = "", retryAtMs = 0))) }; persist()
+                var failedTrack: File? = null
                 try {
+                    // A previous published copy needs an explicit parent replacement, not an
+                    // automatic retry that overwrites it in place.
+                    if (snapshot().entries.getValue(id).tracks.isNotEmpty()) throw MediaIntegrityFailure("FILE_DAMAGED")
+                    update { s1 -> val old = s1.entries.getValue(id); s1.copy(entries = s1.entries + (id to old.copy(status = PreparationStatus.DOWNLOADING, phase = "INFO", error = "", retryAtMs = 0))) }; persist()
                     store.claim(id)
                     if(firstUnprepared(snapshot()) != id) throw CancellationException("Programme priority changed")
                     val shared=streaming?.takeIf { it.isEnabled(id) }
@@ -236,6 +240,7 @@ internal class PreparedLibrary(
                         currentCoroutineContext().ensureActive()
                         if (id !in snapshot().plan) throw CancellationException("Queue item removed")
                         val target = store.track(id, index == 1)
+                        failedTrack = target
                         val retained = if (target.exists()) target.length() else File(target.path + ".part").length()
                         store.storage.rootFor(id,true)
                         val itemLimit=if(store.storage.placement(id)==INTERNAL_STORAGE)internalLimit else store.storage.limit(store.storage.placement(id))
@@ -257,6 +262,7 @@ internal class PreparedLibrary(
                         validate(store.file(id, track.name), index == 1, resolved.durationSeconds)
                         if (index == 0 && resolved.audio == null) validate(store.file(id, track.name), true, resolved.durationSeconds)
                         tracks += track
+                        failedTrack = null
                     }
                     currentCoroutineContext().ensureActive()
                     update { it.copy(entries = it.entries + (id to PreparedEntry(id, PreparationStatus.READY,
@@ -272,6 +278,32 @@ internal class PreparedLibrary(
                         throw CancellationException("Preparation cancelled", error)
                     }
                     onFailure(id, error)
+                    if (error is MediaIntegrityFailure) {
+                        val previous = snapshot().entries.getValue(id)
+                        // Only discard a failed, unpublished transfer. A former READY or local
+                        // file and shared cache remain intact for an explicit parent repair.
+                        val disposable = !previous.local && previous.tracks.isEmpty() && failedTrack != null
+                        if (disposable) {
+                            try {
+                                store.storage.rootFor(id,true)
+                                ResumeFiles(failedTrack!!).discardUnpublished()
+                            } catch (_: Exception) {
+                                update { current -> current.copy(paused=true,entries=current.entries+(id to previous.copy(
+                                    status=PreparationStatus.ERROR,error="STORAGE_ERROR",phase="",retryAtMs=0))) }
+                                persist();break
+                            }
+                        }
+                        val attempt = previous.integrityAttempts + 1
+                        val again = disposable && attempt <= 2
+                        update { current -> current.copy(paused = current.paused || !again,
+                            entries = current.entries + (id to previous.copy(
+                                status = if(again) PreparationStatus.RETRY_WAIT else PreparationStatus.ERROR,
+                                phase = if(again) "VERIFY_RETRY" else "", error = if(again) "INTEGRITY_RETRY" else error.code,
+                                integrityAttempts = attempt, bytes = store.retainedBytes(id),
+                                retryAtMs = if(again) now() + retryDelay(attempt).coerceIn(1,5000) else 0))) }
+                        persist()
+                        if (again) continue else break
+                    }
                     val code = when {
                         error is StorageUnavailable -> error.code
                         error is dev.siyovush.parentcast.tv.streaming.RangeFailure && error.reason in setOf("NO_SPACE","REPRESENTATION_CHANGED","RANGE_UNSUPPORTED","RANGE_IDENTITY_UNCONFIRMED","STORAGE_ERROR","UNAVAILABLE","UNSUPPORTED","YOUTUBE_AUTH_REQUIRED") -> error.reason

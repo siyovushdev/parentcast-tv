@@ -19,7 +19,7 @@ internal data class PreparedEntry(
     val total: Long = 0, val error: String = "", val tracks: List<LocalTrack> = emptyList(),
     val phase: String = "", val totalKnown: Boolean = false,
     val local: Boolean = false, val mime: String = "video/mp4",
-    val attempts: Int = 0, val retryAtMs: Long = 0,
+    val attempts: Int = 0, val retryAtMs: Long = 0, val integrityAttempts: Int = 0,
 )
 internal data class PreparationState(
     val enabled: Boolean = false, val paused: Boolean = false,
@@ -58,7 +58,7 @@ internal class PreparedStore(val directory: File, storageProvider: (() -> List<M
                 } }
                 val status = PreparationStatus.valueOf(e.getString("status"))
                 id to PreparedEntry(id, if (status == PreparationStatus.DOWNLOADING) PreparationStatus.WAITING else status,
-                    e.optString("title"), e.optLong("duration"), e.optLong("bytes"), e.optLong("total"), e.optString("error"), tracks, e.optString("phase"), e.optBoolean("totalKnown"), e.optBoolean("local"), e.optString("mime", "video/mp4"), e.optInt("attempts"), e.optLong("retryAtMs")).let { entry ->
+                    e.optString("title"), e.optLong("duration"), e.optLong("bytes"), e.optLong("total"), e.optString("error"), tracks, e.optString("phase"), e.optBoolean("totalKnown"), e.optBoolean("local"), e.optString("mime", "video/mp4"), e.optInt("attempts"), e.optLong("retryAtMs"), e.optInt("integrityAttempts")).let { entry ->
                         if (status == PreparationStatus.DOWNLOADING) entry.copy(tracks = emptyList(), phase = "WAITING")
                         else if(root.optInt("resumeVersion",0)==0 && !entry.local && status==PreparationStatus.ERROR && entry.error=="DOWNLOAD_FAILED") entry.copy(status=PreparationStatus.RETRY_WAIT,error="NETWORK_RETRY",phase="RETRY",retryAtMs=0)
                         else entry
@@ -76,7 +76,7 @@ internal class PreparedStore(val directory: File, storageProvider: (() -> List<M
         s.entries.values.forEach { e ->
             val tracks = JSONArray(); e.tracks.forEach { t -> tracks.put(JSONObject().put("name", t.name).put("bytes", t.bytes).put("sha256", t.sha256)) }
             entries.put(JSONObject().put("id", e.id).put("status", e.status.name).put("title", e.title).put("duration", e.duration)
-                .put("bytes", e.bytes).put("total", e.total).put("error", e.error).put("tracks", tracks).put("phase", e.phase).put("totalKnown", e.totalKnown).put("local", e.local).put("mime", e.mime).put("attempts", e.attempts).put("retryAtMs", e.retryAtMs))
+                .put("bytes", e.bytes).put("total", e.total).put("error", e.error).put("tracks", tracks).put("phase", e.phase).put("totalKnown", e.totalKnown).put("local", e.local).put("mime", e.mime).put("attempts", e.attempts).put("retryAtMs", e.retryAtMs).put("integrityAttempts",e.integrityAttempts))
         }
         val root = JSONObject().put("explicitSelection",s.explicitSelection).put("resumeVersion",1).put("targetGroupId",s.targetGroupId ?: JSONObject.NULL).put("enabled", s.enabled).put("paused", s.paused).put("plan", JSONArray(s.plan)).put("entries", entries).put("deleting", JSONArray(s.deleting)).put("operationError", s.operationError)
         val temporary = File(directory, "index.tmp")

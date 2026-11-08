@@ -838,6 +838,8 @@ open class MainActivity : Activity() {
     }
 
     private fun errorStatusText(snapshot: CoordinatorSnapshot): String {
+        if (snapshot.error?.diagnostic?.contains("FILE_DAMAGED") == true)
+            return "Скачанный файл повреждён. Повторно подготовьте ролик в родительском пульте."
         val summary = when (snapshot.error?.kind) {
             PlaybackErrorKind.INVALID_LINK -> getString(R.string.debug_invalid_link)
             PlaybackErrorKind.UNAVAILABLE -> "Ошибка: ролик недоступен"

@@ -81,7 +81,7 @@ class ResumeDownloadTest {
     @Test fun completePartial416IsAcceptedOnlyWithMatchingValidatorAndLength() = runBlocking {
         for(valid in listOf(true,false)) MockWebServer().use { server ->
             val target=File(temp.newFolder(),"video000001.video.mp4");val files=ResumeFiles(target);files.partial.writeBytes(data)
-            files.write(ResumeRecord(spec(server).resumeIdentity,data.size.toLong(),"\"one\"",true))
+            files.write(ResumeRecord(spec(server).resumeIdentity,data.size.toLong(),"\"one\"",true,blocks=listOf(IntegrityBlock(data.size,sha256(files.partial)))))
             server.enqueue(MockResponse().setResponseCode(416).setHeader("ETag",if(valid)"\"one\"" else "\"other\"").setHeader("Content-Range","bytes */${data.size}"))
             if(!valid)server.enqueue(full())
             downloader().download(spec(server),target,1_000_000) {_,_->}
@@ -96,6 +96,56 @@ class ResumeDownloadTest {
             val work=launch(Dispatchers.IO) {downloader().download(spec(server).copy(sizeBytes=larger.size.toLong()),target,1_000_000) {bytes,_->if(bytes>0)started.complete(Unit)}}
             withTimeout(5000) {started.await()};withTimeout(5000) {work.cancelAndJoin()}
             assertFalse(target.exists());assertTrue(File(target.path+".part").length()>0);assertNotNull(ResumeFiles(target).read())
+        }
+    }
+    @Test fun receivedDigestDetectsStorageChangeBeforePublication() = runBlocking {
+        MockWebServer().use { server ->
+            val target=File(temp.newFolder(),"video000001.video.mp4");server.enqueue(full())
+            val writer=HttpTrackDownloader(DisabledYouTubeSession,transferEvent={event,_->
+                if(event=="VERIFY_TRACK")java.io.RandomAccessFile(target.path+".part","rw").use { it.seek(4096);it.writeByte(99) }
+            },allowed={it.host=="localhost"})
+            val error=assertThrows(MediaIntegrityFailure::class.java) { runBlocking {writer.download(spec(server),target,1_000_000){_,_->}} }
+            assertEquals("WRITE_VERIFY_FAILED",error.code);assertFalse(target.exists())
+        }
+    }
+    @Test fun damagedPartialIsRestartedBeforeRangeRequest() = runBlocking {
+        MockWebServer().use { server ->
+            val target=File(temp.newFolder(),"video000001.video.mp4");interrupted(server,target)
+            java.io.RandomAccessFile(target.path+".part","rw").use {it.seek(17);it.writeByte(99)}
+            server.enqueue(full());downloader().download(spec(server),target,1_000_000){_,_->}
+            server.takeRequest();assertNull(server.takeRequest().getHeader("Range"));assertArrayEquals(data,target.readBytes())
+        }
+    }
+    @Test fun crashTailBeyondCheckpointIsDiscardedWhileTrustedPrefixResumes() = runBlocking {
+        MockWebServer().use { server ->
+            val target=File(temp.newFolder(),"video000001.video.mp4");val files=ResumeFiles(target)
+            val prefix=data.copyOfRange(0,32768);files.partial.writeBytes(prefix)
+            files.write(ResumeRecord(spec(server).resumeIdentity,data.size.toLong(),"\"one\"",true,blocks=listOf(IntegrityBlock(prefix.size,sha256(files.partial)))))
+            files.partial.appendBytes(ByteArray(8192){99})
+            server.enqueue(full(data.copyOfRange(prefix.size,data.size)).setResponseCode(206).setHeader("Content-Range","bytes ${prefix.size}-${data.lastIndex}/${data.size}"))
+            downloader().download(spec(server),target,1_000_000){_,_->}
+            assertEquals("bytes=${prefix.size}-",server.takeRequest().getHeader("Range"));assertArrayEquals(data,target.readBytes())
+        }
+    }
+    @Test fun multipleIntegrityCheckpointsResumeAfterLargeTransferBreak() = runBlocking {
+        MockWebServer().use { server ->
+            val big=ByteArray(9*1024*1024) { (it%251).toByte() };val target=File(temp.newFolder(),"video000001.video.mp4")
+            val stream=spec(server).copy(sizeBytes=big.size.toLong())
+            server.enqueue(full(big).setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY))
+            assertThrows(java.io.IOException::class.java) {runBlocking {downloader().download(stream,target,16_000_000){_,_->}}}
+            val record=ResumeFiles(target).read()!!;val offset=File(target.path+".part").length()
+            assertTrue(record.blocks.size>=2);assertTrue(record.blocks.all {it.bytes in 1..INTEGRITY_BLOCK_BYTES})
+            assertEquals(offset,record.blocks.sumOf {it.bytes.toLong()})
+            server.enqueue(full(big.copyOfRange(offset.toInt(),big.size)).setResponseCode(206).setHeader("Content-Range","bytes $offset-${big.lastIndex}/${big.size}"))
+            downloader().download(stream,target,16_000_000){_,_->};assertArrayEquals(big,target.readBytes())
+        }
+    }
+    @Test fun legacyUnverifiedPartialRestartsInsteadOfBecomingTrusted() = runBlocking {
+        MockWebServer().use { server ->
+            val target=File(temp.newFolder(),"video000001.video.mp4");val files=ResumeFiles(target);files.partial.writeBytes(ByteArray(32768){99})
+            files.write(ResumeRecord(spec(server).resumeIdentity,data.size.toLong(),"\"one\"",true,integrityVersion=0))
+            server.enqueue(full());downloader().download(spec(server),target,1_000_000){_,_->}
+            assertNull(server.takeRequest().getHeader("Range"));assertArrayEquals(data,target.readBytes())
         }
     }
     @Test fun productionUrlPolicyRejectsArbitraryNetworkTargets() {
