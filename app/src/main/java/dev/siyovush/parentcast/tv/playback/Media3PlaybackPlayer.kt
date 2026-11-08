@@ -218,19 +218,35 @@ class Media3PlaybackPlayer(
         }
     }
 
-    private fun mapError(error: PlaybackException): PlaybackFailure {
-        val causes = generateSequence(error as Throwable) { it.cause }.toList()
-        val forbidden = causes.filterIsInstance<HttpDataSource.InvalidResponseCodeException>()
-            .any { it.responseCode == 403 }
-        val decoder = error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
-            error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
-            error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
-        val network = causes.any { it is IOException }
-        val kind = when {
-            decoder -> PlaybackErrorKind.DECODER
-            network -> PlaybackErrorKind.NETWORK
-            else -> PlaybackErrorKind.PLAYBACK
-        }
-        return PlaybackFailure(kind, canRefresh = forbidden)
+    private fun mapError(error: PlaybackException): PlaybackFailure =
+        classifyPlaybackError(error,activeVideo?.video?.onlineKey!=null)
+}
+
+/** Only a selected direct-online source may be reopened automatically. */
+@androidx.annotation.OptIn(UnstableApi::class)
+internal fun classifyPlaybackError(error:PlaybackException,online:Boolean):PlaybackFailure {
+    val causes=generateSequence(error as Throwable){it.cause}.take(12).toList()
+    val reason=causes.filterIsInstance<dev.siyovush.parentcast.tv.streaming.RangeFailure>().firstOrNull()?.reason
+    val forbidden=causes.filterIsInstance<HttpDataSource.InvalidResponseCodeException>().any {it.responseCode==403}
+    val decoder=error.errorCode in setOf(PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FAILED,PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED)
+    val parser=causes.any {it is androidx.media3.common.ParserException}
+    val network=causes.any {it is IOException}
+    val retryable=reason in setOf("NETWORK_RETRY","URL_EXPIRED") || (reason==null && network && !parser)
+    val recovery=when {
+        !online || decoder -> OnlineRecovery.NONE
+        reason!=null && !retryable -> OnlineRecovery.NONE
+        parser -> OnlineRecovery.CONTAINER
+        retryable -> OnlineRecovery.NETWORK
+        else -> OnlineRecovery.NONE
     }
+    val kind=when {
+        decoder -> PlaybackErrorKind.DECODER
+        reason in setOf("UNSUPPORTED_MEDIA_HOST","RANGE_UNSUPPORTED","INVALID_RANGE","REPRESENTATION_CHANGED","QUALITY_UNAVAILABLE") -> PlaybackErrorKind.UNSUPPORTED
+        reason=="UNAVAILABLE" -> PlaybackErrorKind.UNAVAILABLE
+        network -> PlaybackErrorKind.NETWORK
+        else -> PlaybackErrorKind.PLAYBACK
+    }
+    return PlaybackFailure(kind,canRefresh=forbidden,diagnostic=reason ?: if(parser)"ONLINE_CONTAINER_READ" else "",
+        stopRequested=reason=="YOUTUBE_AUTH_REQUIRED",onlineRecovery=recovery)
 }

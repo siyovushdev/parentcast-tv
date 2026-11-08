@@ -31,6 +31,7 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
     val player = Media3PlaybackPlayer(app, session, prepared::allowsPlaybackFile) { spec -> onlinePlayback.dataSourceFactory(spec) ?: streaming.dataSourceFactory(spec) }
     val coordinator = PlaybackCoordinator(onlinePlayback.source(streaming.source(PreparedYouTubeSource(prepared, YtDlpYouTubeSource(app, session)))),
         AtomicQueueStore(File(app.filesDir, "queue-state.json")), player, scope,
+        onlinePlayback = onlinePlayback::enabled,
         autoResumeOnStartup = ParentModeSettings(app).autoResumeAfterBoot,
         authorizationGate = { prepared.snapshot().enabled || !session.isSupported || session.isEnabled },
         localSource = object : dev.siyovush.parentcast.tv.youtube.YouTubeSource { override suspend fun resolve(videoId: String) = prepared.localOrWait(videoId, own = true) ?: error("LOCAL_FILE_NOT_FOUND") })
@@ -96,7 +97,7 @@ internal class ParentCastRuntime(context: Context, private val changed: (Coordin
         }
     }
     private val ticker = object : Runnable {
-        override fun run() { coordinator.savePosition(); handler.postDelayed(this, 5_000) }
+        override fun run() { coordinator.savePosition(); PlaybackRecoveryProbe.poll(app,coordinator,onlinePlayback::enabled); handler.postDelayed(this, 5_000) }
     }
     init {
         lateinit var api: ApiController

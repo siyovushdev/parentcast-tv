@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -31,6 +32,7 @@ class PlaybackCoordinator(
     private val authorizationGate: () -> Boolean = { true },
     private val autoResumeOnStartup: Boolean = true,
     private val localSource: YouTubeSource? = null,
+    private val onlinePlayback: (String) -> Boolean = { false },
 ) : PlaybackPlayer.Listener {
     private var state = QueueState.Empty
     private var committedState = QueueState.Empty
@@ -45,6 +47,11 @@ class PlaybackCoordinator(
     private var extractionJob: Job? = null
     private var preparedItemId: String? = null
     private var refreshAttempted = false
+    private var onlineRetry: Job? = null
+    private var retryItem: String? = null
+    private var retryAnchor = 0L
+    private var retryAttempts = 0
+    private var containerRetries = 0
     private var listener: ((CoordinatorSnapshot) -> Unit)? = null
     private var started = false
     private var closed = false
@@ -202,6 +209,7 @@ class PlaybackCoordinator(
 
     fun play() {
         if (closed || state.items.isEmpty()) return
+        onlineRetry?.cancel();onlineRetry=null;retryItem=null
         state = state.play()
         error = null
         refreshAttempted = false
@@ -240,6 +248,7 @@ class PlaybackCoordinator(
             play()
             return
         }
+        onlineRetry?.cancel();onlineRetry=null
         savePosition()
         state = state.togglePause()
         player.pause()
@@ -472,6 +481,7 @@ class PlaybackCoordinator(
         closed = true
         generation++
         extractionJob?.cancel()
+        onlineRetry?.cancel();onlineRetry=null
     }
 
     override fun onEnded(generation: Long) {
@@ -496,6 +506,10 @@ class PlaybackCoordinator(
     override fun onError(generation: Long, failure: PlaybackFailure) {
         if (!isCurrentPlayerRequest(generation)) return
         savePosition()
+        if(failure.stopRequested) {
+            state=state.stop();invalidateRequest();persist();status=PlaybackStatus.ERROR;error=failure;emit();return
+        }
+        if (scheduleOnlineRetry(failure))return
         if (failure.canRefresh && !refreshAttempted && state.intent != PlaybackIntent.STOP) {
             refreshAttempted = true
             prepareCurrent(preserveRefreshAttempt = true)
@@ -505,6 +519,34 @@ class PlaybackCoordinator(
         status = PlaybackStatus.ERROR
         error = failure
         emit()
+    }
+
+    private fun scheduleOnlineRetry(failure:PlaybackFailure,sourceFailure:Boolean=false):Boolean {
+        val item=state.currentItem ?: return false
+        val mode=if(sourceFailure && failure.kind==PlaybackErrorKind.NETWORK)OnlineRecovery.NETWORK else failure.onlineRecovery
+        if(failure.stopRequested || mode==OnlineRecovery.NONE || item.local || !onlinePlayback(item.videoId) ||
+            state.intent!=PlaybackIntent.PLAY || state.finished || closed)return false
+        if(retryItem!=item.queueItemId || state.positionMs>=retryAnchor+20_000) {
+            retryItem=item.queueItemId;retryAnchor=state.positionMs;retryAttempts=0;containerRetries=0
+        }
+        if(mode==OnlineRecovery.CONTAINER && containerRetries>=2)return false
+        if(mode==OnlineRecovery.CONTAINER)containerRetries++
+        retryAttempts=(retryAttempts+1).coerceAtMost(1_000_000)
+        val wait=(1_000L shl (retryAttempts-1).coerceAtMost(5)).coerceAtMost(30_000L)
+        invalidateRequest()
+        val request=generation
+        status=PlaybackStatus.BUFFERING;error=null
+        diagnostics="Восстанавливаем онлайн-просмотр с сохранённого места. Попытка $retryAttempts через ${wait/1000} с."
+        emit()
+        onlineRetry=scope.launch {
+            delay(wait)
+            if(!closed && generation==request && state.currentItem?.queueItemId==item.queueItemId &&
+                state.intent==PlaybackIntent.PLAY && !state.finished && onlinePlayback(item.videoId)) {
+                onlineRetry=null
+                prepareCurrent(preserveRefreshAttempt=true)
+            }
+        }
+        return true
     }
 
     override fun onFirstFrame(generation: Long) {
@@ -580,6 +622,7 @@ class PlaybackCoordinator(
         } else {
             PlaybackFailure(PlaybackErrorKind.EXTRACTOR)
         }
+        if(scheduleOnlineRetry(failure,sourceFailure=true))return
         if (failure.stopRequested) {
             state = state.stop()
             refreshAttempted = false
@@ -618,6 +661,7 @@ class PlaybackCoordinator(
     }
 
     private fun invalidateRequest() {
+        onlineRetry?.cancel();onlineRetry=null
         localPlayback = false
         generation++
         extractionJob?.cancel()
