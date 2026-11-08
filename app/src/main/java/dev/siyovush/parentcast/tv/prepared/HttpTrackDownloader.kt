@@ -26,7 +26,7 @@ internal class HttpTrackDownloader(
         val transferContext=currentCoroutineContext()
         var url = spec.url.toHttpUrl()
         val files = ResumeFiles(target)
-        var saved = files.read()?.takeIf { spec.resumeIdentity.isNotEmpty() && it.identity == spec.resumeIdentity && (spec.sizeBytes == null || spec.sizeBytes == it.total) }
+        var saved = files.read()?.takeIf { it.integrityVersion == 1 && spec.resumeIdentity.isNotEmpty() && it.identity == spec.resumeIdentity && (spec.sizeBytes == null || spec.sizeBytes == it.total) }
         if (saved == null) files.reset()
         if (saved?.complete == true && target.exists() && (target.length() != saved.total || sha256(target) { transferContext.ensureActive() } != saved.sha)) {
             files.reset(); saved = null
@@ -37,8 +37,11 @@ internal class HttpTrackDownloader(
             progress(saved.total, saved.total); return@coroutineScope LocalTrack(target.name, saved.total, saved.sha)
         }
         if (saved?.complete == true && !files.partial.exists()) { check(target.renameTo(files.partial)); saved = saved.copy(complete = false) }
-        var offset = if (saved != null && saved.validator.isNotEmpty()) files.partial.length() else 0L
+        var offset = if (saved != null && saved.validator.isNotEmpty()) saved.blocks.sumOf { it.bytes.toLong() } else 0L
+        var incoming = if (offset > 0 && files.partial.exists()) IncomingTrackIntegrity.restore(files.partial, saved!!.blocks) { transferContext.ensureActive() } else null
+        if (offset > 0 && incoming == null) { transferEvent("PARTIAL_VERIFY_FAILED",offset); offset = 0 }
         if (offset <= 0 || offset > (saved?.total ?: 0)) { files.reset(); saved = null; offset = 0 }
+        else if (files.partial.length() != offset) java.io.RandomAccessFile(files.partial,"rw").use { it.setLength(offset) }
         repeat(8) {
             require(if (isVk) dev.siyovush.parentcast.tv.media.VkMediaPolicy.allows(url) else allowed(url)) { "UNSUPPORTED" }
             currentCoroutineContext().ensureActive()
@@ -61,7 +64,9 @@ internal class HttpTrackDownloader(
                         val same = old != null && validator?.first == old.validator && validator.second == old.etag
                         if (response.code == 416) {
                             if (offset > 0 && old != null && offset == old.total && same && response.header("Content-Range") == "bytes */${old.total}") {
-                                check(files.partial.renameTo(target)); val sha = sha256(target) { transferContext.ensureActive() }
+                                val sha = incoming!!.digest()
+                                if (sha256(files.partial) { transferContext.ensureActive() } != sha) throw MediaIntegrityFailure("WRITE_VERIFY_FAILED")
+                                check(files.partial.renameTo(target))
                                 files.write(old.copy(complete = true, sha = sha)); progress(old.total, old.total)
                                 return@use LocalTrack(target.name, old.total, sha)
                             }
@@ -80,12 +85,20 @@ internal class HttpTrackDownloader(
                         if(spec.sizeBytes!=null && spec.sizeBytes!=total) throw RetryableTransfer("REPRESENTATION_CHANGED")
                         check(total <= allowance && target.parentFile!!.usableSpace - (total - offset) >= FREE_RESERVE) { "NO_SPACE" }
                         val record = ResumeRecord(spec.resumeIdentity, total, validator?.first.orEmpty(), validator?.second ?: false)
-                        files.write(record)
+                        if (offset == 0L) incoming = IncomingTrackIntegrity.fresh()
+                        val integrity = checkNotNull(incoming)
+                        files.write(record.copy(blocks=integrity.checkpoint()))
                         val operationContext = currentCoroutineContext()
                         var bytes = offset; var lastProgress = 0L
                         progress(bytes, total)
                         body.byteStream().use { input ->
                             (try {FileOutputStream(files.partial, offset > 0)} catch(error:java.io.IOException){throw MediaStorageFailure(error)}).use { output ->
+                                fun checkpoint() {
+                                    if (integrity.pendingBytes == 0) return
+                                    try {output.fd.sync()} catch(error:java.io.IOException){throw MediaStorageFailure(error)}
+                                    files.write(record.copy(blocks=integrity.checkpoint()))
+                                }
+                                try {
                                 copyDownloadBlocks(input, { operationContext.ensureActive() }) { buffer, count ->
                                     operationContext.ensureActive()
                                     check(bytes + count <= total && bytes + count <= allowance) { "DOWNLOAD_FAILED" }
@@ -93,15 +106,22 @@ internal class HttpTrackDownloader(
                                         check(target.parentFile!!.usableSpace - count >= FREE_RESERVE) { "NO_SPACE" }
                                         try {output.write(buffer, 0, count)} catch(error:java.io.IOException){throw MediaStorageFailure(error)}
                                     }
+                                    integrity.accept(buffer,count)
                                     bytes += count
+                                    if(integrity.pendingBytes >= INTEGRITY_BLOCK_BYTES) checkpoint()
                                     val now = System.nanoTime(); if (now - lastProgress > 500_000_000L) { progress(bytes,total); lastProgress=now }
                                 }
+                                } finally { checkpoint() }
                                 try {output.fd.sync()} catch(error:java.io.IOException){throw MediaStorageFailure(error)}
                             }
                         }
                         if (bytes != total) throw RetryableTransfer("INCOMPLETE_RESPONSE")
-                        operationContext.ensureActive(); check(files.partial.renameTo(target)) { "DOWNLOAD_FAILED" }
-                        val sha = sha256(target) { transferContext.ensureActive() }; files.write(record.copy(complete = true, sha = sha)); progress(bytes,total)
+                        operationContext.ensureActive()
+                        val sha = integrity.digest()
+                        transferEvent("VERIFY_TRACK",bytes)
+                        if (sha256(files.partial) { transferContext.ensureActive() } != sha) throw MediaIntegrityFailure("WRITE_VERIFY_FAILED")
+                        check(files.partial.renameTo(target)) { "DOWNLOAD_FAILED" }
+                        files.write(record.copy(complete = true, sha = sha, blocks=integrity.checkpoint())); progress(bytes,total)
                         LocalTrack(target.name,bytes,sha)
                     }
                 }

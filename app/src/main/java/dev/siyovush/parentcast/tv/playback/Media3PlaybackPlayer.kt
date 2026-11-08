@@ -242,11 +242,12 @@ internal fun classifyPlaybackError(error:PlaybackException,online:Boolean):Playb
     }
     val kind=when {
         decoder -> PlaybackErrorKind.DECODER
+        parser && !online -> PlaybackErrorKind.PLAYBACK
         reason in setOf("UNSUPPORTED_MEDIA_HOST","RANGE_UNSUPPORTED","INVALID_RANGE","REPRESENTATION_CHANGED","QUALITY_UNAVAILABLE") -> PlaybackErrorKind.UNSUPPORTED
         reason=="UNAVAILABLE" -> PlaybackErrorKind.UNAVAILABLE
         network -> PlaybackErrorKind.NETWORK
         else -> PlaybackErrorKind.PLAYBACK
     }
-    return PlaybackFailure(kind,canRefresh=forbidden,diagnostic=reason ?: if(parser)"ONLINE_CONTAINER_READ" else "",
+    return PlaybackFailure(kind,canRefresh=forbidden,diagnostic=reason ?: if(parser) (if(online) "ONLINE_CONTAINER_READ" else "FILE_DAMAGED") else "",
         stopRequested=reason=="YOUTUBE_AUTH_REQUIRED",onlineRecovery=recovery)
 }

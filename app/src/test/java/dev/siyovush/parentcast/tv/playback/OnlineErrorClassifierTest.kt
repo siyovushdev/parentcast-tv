@@ -16,6 +16,8 @@ class OnlineErrorClassifierTest {
         assertEquals(OnlineRecovery.CONTAINER,classifyPlaybackError(error,true).onlineRecovery)
         assertEquals("ONLINE_CONTAINER_READ",classifyPlaybackError(error,true).diagnostic)
         assertEquals(OnlineRecovery.NONE,classifyPlaybackError(error,false).onlineRecovery)
+        assertEquals(PlaybackErrorKind.PLAYBACK,classifyPlaybackError(error,false).kind)
+        assertEquals("FILE_DAMAGED",classifyPlaybackError(error,false).diagnostic)
     }
     @Test fun transportPolicyFaultsAreNotMisreportedAsRetryableNetwork() {
         for(reason in listOf("RANGE_UNSUPPORTED","INVALID_RANGE","UNSUPPORTED_MEDIA_HOST","REPRESENTATION_CHANGED","UNAVAILABLE","YOUTUBE_AUTH_REQUIRED")) {

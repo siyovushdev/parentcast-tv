@@ -241,8 +241,8 @@ class PreparedStorageTest {
         val library=PreparedLibrary(store,source,TrackDownloader { _,_,_,_->error("Must not download") },this,{_,_,_->})
         assertThrows(YouTubeSourceException::class.java) { runBlocking { library.localOrWait(video,preparedOnly=true) } }
         library.configure(true,listOf(video));library.runWorker()
-        assertEquals("UNSUPPORTED",library.snapshot().entries[video]?.error)
-        assertEquals("video-bytes",original.readText());assertEquals(1,store.storage.retained().size)
+        assertEquals("FILE_DAMAGED",library.snapshot().entries[video]?.error)
+        assertEquals("damaged",store.track(video).readText());assertEquals("video-bytes",original.readText());assertEquals(1,store.storage.retained().size)
     }
     @Test fun retryCannotRedirectOntoRetainedOriginalAndOverwriteIt() = runTest {
         val f=fixture();val store=f.store();ready(store);val original=store.track(video);val library=library(store,this)

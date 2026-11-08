@@ -152,6 +152,7 @@ function renderState() {
     byId("updatedAt").textContent = `Обновлено плеером: ${new Date(state.updatedAtMs).toLocaleString()}`;
     byId("playbackError").textContent = state.error && (state.error.diagnostic || "").includes("PREPARATION_REQUIRED")
         ? "Для VK нажмите «Подготовить очередь / продолжить» и дождитесь готовности файла."
+        : state.error && (state.error.diagnostic || "").includes("FILE_DAMAGED") ? "Скачанный файл повреждён. Требуется повторная подготовка ролика."
         : state.error ? `${state.error.kind}: ${state.error.diagnostic || ""}` : "";
     byId("diagnostics").textContent = state.diagnostics || "";
     renderQueue();
@@ -199,7 +200,7 @@ function renderPrepared() {
     const parentFor = entry => !existingGroups || !(state.groups||[]).length ? rows : groupParent(ownerFor(entry));
     const names = {STORAGE_UNAVAILABLE: "Носитель отключён — подключите карту", STORAGE_BUSY: "Хранилище занято", WAITING: "В очереди загрузки", DOWNLOADING: "Скачивание", READY: "Готово", ERROR: "Ошибка", DELETED: "Файл удалён", DELETING: "Удаляем файл", RETRY_WAIT: "Ожидаем восстановления сети"};
     const phases = {INFO: "Получаем данные о ролике", VIDEO: "Загружаем видео", AUDIO: "Загружаем звук", VERIFY: "Проверяем загрузку"};
-    const errors = {STORAGE_UNAVAILABLE: "Подключите носитель; файл не удалён",STORAGE_READ_ONLY: "Носитель доступен только для чтения",STORAGE_BUSY: "Проверяем хранилище",STORAGE_ERROR: "Хранилище недоступно. Проверьте место и повторите подготовку",UNAVAILABLE: "Ролик больше недоступен у источника",YOUTUBE_AUTH_REQUIRED: "YouTube требует авторизацию. Включите действующую тестовую сессию на ТВ и повторите подготовку", NO_SPACE: "Недостаточно места в лимите / свободного места", UNSUPPORTED: "Нужен публичный завершённый ролик", NETWORK_RETRY: "Сеть прервалась. Повторим автоматически", DOWNLOAD_FAILED: "Загрузка прервана. Проверьте сеть и нажмите «Повторить ошибки»", FILE_DAMAGED: "Файл повреждён. Повторите загрузку"};
+    const errors = {INTEGRITY_RETRY: "Проверка не пройдена. Скачиваем заново; не более двух повторов", MEDIA_CORRUPT: "Видео не прошло проверку. Подготовка остановлена", WRITE_VERIFY_FAILED: "Записанный файл отличается от полученных данных. Подготовка остановлена", STORAGE_UNAVAILABLE: "Подключите носитель; файл не удалён",STORAGE_READ_ONLY: "Носитель доступен только для чтения",STORAGE_BUSY: "Проверяем хранилище",STORAGE_ERROR: "Хранилище недоступно. Проверьте место и повторите подготовку",UNAVAILABLE: "Ролик больше недоступен у источника",YOUTUBE_AUTH_REQUIRED: "YouTube требует авторизацию. Включите действующую тестовую сессию на ТВ и повторите подготовку", NO_SPACE: "Недостаточно места в лимите / свободного места", UNSUPPORTED: "Нужен публичный завершённый ролик", NETWORK_RETRY: "Сеть прервалась. Повторим автоматически", DOWNLOAD_FAILED: "Загрузка прервана. Проверьте сеть и нажмите «Повторить ошибки»", FILE_DAMAGED: "Файл повреждён. Повторите загрузку"};
     s.entries.forEach(e => {
         const prior=existingRows?.get(e.videoId);
         const row = prior || document.createElement("div");
